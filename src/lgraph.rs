@@ -1,85 +1,18 @@
 use std::{
-    cell::RefCell,
-    collections::VecDeque,
     fmt::Debug,
-    rc::{Rc, Weak},
+    rc::Rc,
 };
+
+use crate::lnode::*;
 use LNode::*;
 
-/// Enum representing a lambda node. Such node can have three forms:
-/// - Application: an application node has two children
-/// - Abstraction: an abstraction node has one child
-/// - Variable: this kind of node can represent bound and unbound variables.
-#[derive(Clone)]
-pub enum LNode {
-    App(Rc<Self>, Rc<Self>, RefCell<Vec<Weak<Self>>>),
-    Abs(Rc<Self>, RefCell<Vec<Weak<Self>>>),
-    BVar(RefCell<Weak<Self>>, RefCell<Vec<Weak<Self>>>),
-    Var(RefCell<Vec<Weak<Self>>>),
-}
-
-/// Implementing runtime equality for LNode.
-impl PartialEq for LNode {
-    fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        !Self::eq(self, other)
-    }
-}
-
-impl Debug for LNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Abs(_, _) => f.write_fmt(format_args!("Abs: {:p}", self)),
-            App(_, _, _) => f.write_fmt(format_args!("App: {:p}", self)),
-            BVar(_, _) => f.write_fmt(format_args!("Var: {:p}", self)),
-            Var(_) => f.write_fmt(format_args!("Var: {:p}", self)),
-        }
-    }
-}
-
-impl LNode {
-    /// Modifies the current node parent pointer with `p`. It has not a public
-    fn add_parent(&self, p: Rc<LNode>) {
-        let parent = Rc::downgrade(&p);
-        match &*self {
-            App(_, _, p) => p.borrow_mut().push(parent),
-            Abs(_, p) => p.borrow_mut().push(parent),
-            BVar(_, p) => p.borrow_mut().push(parent),
-            Var(p) => p.borrow_mut().push(parent),
-        }
-    }
-
-    /// Returns the reference to the parent of the current node.
-    pub fn get_parent(&self) -> Vec<Weak<Self>> {
-        let p = match self {
-            App(_, _, p) => p,
-            Abs(_, p) => p,
-            BVar(_, p) => p,
-            Var(p) => p,
-        };
-
-        let p = p.borrow();
-        let p = p.clone();
-        p
-    }
-
-    pub fn add_abs(&self, abs: Rc<LNode>) {
-        let abs = Rc::downgrade(&abs);
-        match &*self {
-            BVar(x, _) => *x.borrow_mut() = abs,
-            _ => (),
-        }
-    }
-}
 /// Structure that defines a Lambda-Graph (see [this](https://arxiv.org/pdf/1907.06101.pdf)).
 #[derive(Clone, Debug)]
 pub struct LGraph {
     nodes: Vec<Rc<LNode>>,
 }
 
+#[allow(dead_code)]
 impl LGraph {
     /// Returns an empty LGraph.
     pub fn new() -> Self {
@@ -95,36 +28,12 @@ impl LGraph {
     pub fn add_node(&mut self, node: Rc<LNode>) {
         self.nodes.push(node);
     }
-}
 
-/// Structure holding the information to build the equivalence classes over a lambda graph.
-#[derive(Clone, Debug)]
-pub struct State {
-    g: LGraph,
-    undir: Vec<(Rc<LNode>, Rc<LNode>)>,   //undirected edges
-    canonic: Vec<(Rc<LNode>, Rc<LNode>)>, // canonic edges
-    building: Vec<(Rc<LNode>, bool)>,
-    queue: Vec<(Rc<LNode>, VecDeque<Rc<LNode>>)>,
-}
-
-impl State {
-    /// Returns a new state with an initial edge `(u, v)` in the `undir` vector.
-    pub fn new(g: LGraph, u: Rc<LNode>, v: Rc<LNode>) -> Self {
-        Self {
-            g,
-            undir: vec![(u, v)],
-            canonic: Vec::new(),
-            building: Vec::new(),
-            queue: Vec::new(),
-        }
-    }
-
-    /// Returns the neighbours in the `undir` vector for a given node `u`.
-    fn get_neighbours(&self, u: Rc<LNode>) -> Vec<Rc<LNode>> {
-        self.undir
+    fn var_nodes(&self) -> Vec<Rc<LNode>> {
+        self.nodes
             .iter()
-            .filter(|(x, y)| x == &u || y == &u)
-            .map(|(x, y)| if *x == u { y.clone() } else { x.clone() })
+            .filter(|x| x.is_bvar() || x.is_var())
+            .map(|x| x.clone())
             .collect()
     }
 
@@ -133,10 +42,11 @@ impl State {
     /// - `enqueue_and_propagate`: creates a queue of the homogeneous node in an equivalence class.
     /// On callback termination, it is expected that the field `undir` contains pairs `(u, v)` such that `u ~ v` where
     /// `~` is the equivalence relation described in the [paper of reference](https://arxiv.org/pdf/1907.06101.pdf)
-    pub fn blind_check(&mut self) -> Result<(), String> {
-        for node in self.g.nodes.clone() {
-            if self.canonic.iter().position(|(x, _)| x == &node).is_none() {
-                if let Err(e) = self.build_equivalence_class(node) {
+    pub fn blind_check(&self) -> Result<(), String> {
+        for n in self.nodes.iter() {
+            // if canonic(n) is undefined
+            if n.canonic().borrow().clone().upgrade().is_none() {
+                if let Err(e) = self.build_equivalence_class(n.clone()) {
                     return Err(e);
                 }
             }
@@ -145,176 +55,340 @@ impl State {
         Ok(())
     }
 
-    fn build_equivalence_class(&mut self, c: Rc<LNode>) -> Result<(), String> {
-        self.canonic.push((c.clone(), c.clone()));
-        self.queue
-            .push((c.clone(), VecDeque::from(vec![c.clone()])));
+    fn build_equivalence_class(&self, c: Rc<LNode>) -> Result<(), String> {
+        *c.canonic().borrow_mut() = Rc::downgrade(&c);
+        *c.building().borrow_mut() = true;
+        c.queue().borrow_mut().push_back(Rc::downgrade(&c));
 
         loop {
-            let n;
-            if let Some(k) = self.queue.iter().position(|(x, _)| x == &c) {
-                n = self.queue[k].1.pop_front();
-            } else {
-                break;
-            }
-
+            let n = c.queue().borrow_mut().pop_front();
             if n.is_none() {
                 break;
             }
+            let n = n.unwrap().upgrade().unwrap();
 
-            let n = n.unwrap();
-
-            // For every parent m of n build the equivalence class. This is done in order to achieve stability in the
-            // algorithm. One can strat from a node that is not a root, and the algorithm would still be valid.
-            // If the pattern doesn't match, we are analyzing a root.
-            for m in n.get_parent() {
-                if let Some(m) = m.upgrade() {
-                    if let Some(k) = self.canonic.iter().position(|(x, _)| x == &m) {
-                        let c1 = self.canonic[k].1.clone();
-                        if self
-                            .building
-                            .iter()
-                            .find(|(x, _)| x == &c1)
-                            .unwrap_or(&(c1, false))
-                            .1
-                        {
-                            return Err("Parent still building".to_string());
+            // For every parent m of n ...
+            for m in n.get_parent().iter().map(|x| x.upgrade()) {
+                if let Some(m) = m {
+                    match m.canonic().borrow().upgrade() {
+                        None => {
+                            if let Err(e) = self.build_equivalence_class(m.clone()) {
+                                return Err(e);
+                            }
                         }
-                    } else {
-                        if let Err(e) = self.build_equivalence_class(m.clone()) {
-                            return Err(e);
+                        Some(c1) => {
+                            if *c1.building().borrow() {
+                                return Err(String::from("Error: Parent still building"));
+                            }
                         }
                     }
                 }
             }
 
-            // For every neighbour m of n propagate the query over the lambda graph.
-            for m in self.get_neighbours(n.clone()) {
-                match self.canonic.iter().find(|(x, _)| x == &m) {
+            // For every ~neighbour m of n ...
+            for m in n.undir().borrow().iter() {
+                let m = m.upgrade().unwrap();
+                let m1 = m.clone().canonic().borrow().upgrade();
+                match m1 {
                     None => {
                         if let Err(e) = self.enqueue_and_propagate(m.clone(), c.clone()) {
                             return Err(e);
                         }
+
+                        // If `m` is not dropped, `borrowMut` error rises since `m` is borrowed as mut more than once
+                        drop(m);
                     }
-                    Some((_, k)) => {
-                        if &c != k {
-                            return Err(
-                                format!("Error, found two different representatives for node {:?} ({:?}): ({:?}, {:?})", m, n, c, k)
-                            );
+                    Some(c1) => {
+                        if c1 != c {
+                            return Err(String::from(
+                                "Error: found two representative nodes for the same class.",
+                            ));
                         }
                     }
                 }
             }
         }
 
-        if let Some(k) = self.building.iter().position(|(x, _)| x == &c) {
-            self.building[k] = (c.clone(), false);
-        }
+        *c.building().borrow_mut() = false;
 
         Ok(())
     }
 
-    fn enqueue_and_propagate(&mut self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
+    fn enqueue_and_propagate(&self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
         match (m.as_ref(), c.as_ref()) {
-            (App(l1, r1, _), App(l2, r2, _)) => {
-                self.undir.push((l1.clone(), l2.clone()));
-                self.undir.push((r1.clone(), r2.clone()));
+            (
+                Abs {
+                    body: b1,
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+                Abs {
+                    body: b2,
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+            ) => {
+                b1.undir().borrow_mut().push(Rc::downgrade(&b2));
+                b2.undir().borrow_mut().push(Rc::downgrade(&b1));
             }
-            (Abs(l1, _), Abs(l2, _)) => {
-                self.undir.push((l1.clone(), l2.clone()));
+            (
+                App {
+                    left: l1,
+                    right: r1,
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+                App {
+                    left: l2,
+                    right: r2,
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+            ) => {
+                l1.undir().borrow_mut().push(Rc::downgrade(&l2));
+                l2.undir().borrow_mut().push(Rc::downgrade(&l1));
+
+                r1.undir().borrow_mut().push(Rc::downgrade(&r2));
+                r2.undir().borrow_mut().push(Rc::downgrade(&r1));
             }
-            (BVar(_, _), BVar(_, _)) | (Var(_), Var(_)) => (),
-            (_, _) => return Err("Compared two different kind of nodes.".to_string()),
+            (
+                Var {
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+                Var {
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+            ) => (),
+            (
+                BVar {
+                    binder: _,
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+                BVar {
+                    binder: _,
+                    parent: _,
+                    undir: _,
+                    canonic: _,
+                    building: _,
+                    queue: _,
+                },
+            ) => (),
+            (_, _) => {
+                return Err(String::from(
+                    "Error: tried to compare two different kind of nodes.",
+                ));
+            }
         }
 
-        if let Some(k) = self.canonic.iter().position(|(x, _)| x == &m) {
-            self.canonic[k] = (m.clone(), c.clone())
-        } else {
-            self.canonic.push((m.clone(), c.clone()))
-        }
-        
-        if let Some(k) = self.queue.iter().position(|(x, _)| x == &c) {
-            self.queue[k].1.push_back(m.clone());
-        } else {
-            self.queue
-                .push((c.clone(), VecDeque::from(vec![m.clone()])));
-        }
+        *m.canonic().borrow_mut() = Rc::downgrade(&c);
+        c.queue().borrow_mut().push_back(Rc::downgrade(&m));
 
         Ok(())
     }
 
-    pub fn var_check(&self) -> Result<(), String> {
-        let g = self.g.clone();
-        let nodes = g.nodes.iter().filter(|x| match x.as_ref() {
-            Var(_) => true,
-            BVar(_, _) => true,
-            _ => false,
-        });
-
-        for v in nodes {
-            let w = self.canonic.iter().find(|(x, _)| x == v).unwrap().1.clone();
-            let v = v.as_ref();
-            let w = w.as_ref();
-
+    /// Function that check if the `var` nodes of the graph satisfy the conditions for a sharing equivalence.
+    /// Returns `true` if the conditions are met, `false` otherwise
+    pub fn var_check(&self) -> bool {
+        for v in self.var_nodes() {
+            let w = v.canonic().borrow().upgrade().unwrap();
             if v != w {
-                match (v, w) {
-                    (Var(_), _) | (_, Var(_)) => {
-                        let err = format!(
-                            "Error: found homogeneous node for unbound variable.\n{:?} {:?}",
-                            v, w
-                        );
-                        return Err(err);
-                    }
-                    (BVar(x, _), BVar(y, _)) => {
-                        let x = x.borrow().upgrade().unwrap();
-                        let y = y.borrow().upgrade().unwrap();
-                        let bx = self
-                            .canonic
-                            .iter()
-                            .find(|(l, _)| *l == x)
+                if v.is_var() || w.is_var() {
+                    return false;
+                }
+                match (v.as_ref(), w.as_ref()) {
+                    (
+                        BVar {
+                            binder: b1,
+                            parent: _,
+                            undir: _,
+                            canonic: _,
+                            building: _,
+                            queue: _,
+                        },
+                        BVar {
+                            binder: b2,
+                            parent: _,
+                            undir: _,
+                            canonic: _,
+                            building: _,
+                            queue: _,
+                        },
+                    ) => {
+                        let b1_canonic = b1
+                            .borrow()
+                            .upgrade()
                             .unwrap()
-                            .clone()
-                            .1;
-                        let by = self
-                            .canonic
-                            .iter()
-                            .find(|(l, _)| *l == y)
+                            .canonic()
+                            .borrow()
+                            .upgrade()
+                            .unwrap();
+                        let b2_canonic = b2
+                            .borrow()
+                            .upgrade()
                             .unwrap()
-                            .clone()
-                            .1;
-
-                        if bx != by {
-                            return Err("Error: parents have different canonic forms. canonic(p(v)) != canonic(p(w))".to_string());
+                            .canonic()
+                            .borrow()
+                            .upgrade()
+                            .unwrap();
+                        if b1_canonic != b2_canonic {
+                            return false;
                         }
                     }
-                    _ => (),
+
+                    (_, _) => (),
                 }
             }
         }
 
-        Ok(())
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Weak};
 
     use super::*;
     #[test]
     fn test() {
-        let var1 = Rc::new(BVar(RefCell::new(Weak::new()), RefCell::new(Vec::new())));
-        let abs1 = Rc::new(Abs(var1.clone(), RefCell::new(Vec::new())));
-        let app1 = Rc::new(App(abs1.clone(), abs1.clone(), RefCell::new(Vec::new())));
+        let var1 = Rc::new(BVar {
+            binder: RefCell::new(Weak::new()),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let abs1 = Rc::new(Abs {
+            body: var1.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let app1 = Rc::new(App {
+            left: abs1.clone(),
+            right: abs1.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
 
-        let var2 = Rc::new(BVar(RefCell::new(Weak::new()), RefCell::new(Vec::new())));
-        let abs2 = Rc::new(Abs(var2.clone(), RefCell::new(Vec::new())));
-        let app2 = Rc::new(App(abs2.clone(), abs2.clone(), RefCell::new(Vec::new())));
-        let root1 = Rc::new(App(app1.clone(), app2.clone(), RefCell::new(Vec::new())));
+        let var2 = Rc::new(BVar {
+            binder: RefCell::new(Weak::new()),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let abs2 = Rc::new(Abs {
+            body: var2.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let app2 = Rc::new(App {
+            left: abs2.clone(),
+            right: abs2.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let root1 = Rc::new(App {
+            left: app1.clone(),
+            right: app2.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
 
-        let var3 = Rc::new(BVar(RefCell::new(Weak::new()), RefCell::new(Vec::new())));
-        let abs3 = Rc::new(Abs(var3.clone(), RefCell::new(Vec::new())));
-        let app3 = Rc::new(App(abs3.clone(), abs3.clone(), RefCell::new(Vec::new())));
-        let root2 = Rc::new(App(app3.clone(), app3.clone(), RefCell::new(Vec::new())));
+        let var3 = Rc::new(BVar {
+            binder: RefCell::new(Weak::new()),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let abs3 = Rc::new(Abs {
+            body: var3.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let var4 = Rc::new(BVar {
+            binder: RefCell::new(Weak::new()),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let abs4 = Rc::new(Abs {
+            body: var4.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let app3 = Rc::new(App {
+            left: abs3.clone(),
+            right: abs4.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+        let root2 = Rc::new(App {
+            left: app3.clone(),
+            right: app3.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+
+        root1.undir().borrow_mut().push(Rc::downgrade(&root2));
+        root2.undir().borrow_mut().push(Rc::downgrade(&root1));
 
         // Setting up the parents.
         var1.add_parent(abs1.clone());
@@ -325,12 +399,15 @@ mod tests {
         app2.add_parent(root1.clone());
         var3.add_parent(abs3.clone());
         abs3.add_parent(app3.clone());
+        var4.add_parent(abs4.clone());
+        abs4.add_parent(app3.clone());
         app3.add_parent(root2.clone());
 
         // Bound the variable nodes.
-        var3.add_abs(abs3.clone());
-        var2.add_abs(abs2.clone());
-        var1.add_abs(abs1.clone());
+        var4.bind_to(abs4.clone());
+        var3.bind_to(abs3.clone());
+        var2.bind_to(abs2.clone());
+        var1.bind_to(abs1.clone());
 
         let g = LGraph::from(vec![
             root1.clone(),
@@ -347,28 +424,15 @@ mod tests {
         ]);
 
         // DEBUG ONLY: prints the memory cell for each node
-        // g.nodes.iter().for_each(|n| println!("{:?}", n));
-        
-        let mut s = State::new(g, root1.clone(), root2.clone());
-        let result = s.blind_check();
-        assert!(result.is_ok());
+        g.nodes.iter().for_each(|n| println!("{:?}", n));
 
-        match result {
-            Ok(_) => {
-                println!("Blind check ok");
+        let check_res = g.blind_check();
+        assert!(check_res.is_ok(), "{}", check_res.err().unwrap());
+        println!("\nCANONIC EDGES");
+        g.nodes
+            .iter()
+            .for_each(|n| println!("{:?} -> {:?}", n, n.canonic().borrow().upgrade()));
 
-                println!("CANONIC EDGES");
-                s.canonic.iter().for_each(|x| println!("{:?}", x));
-            }
-            Err(e) => {
-                println!("{}", e);
-                println!("CANONIC EDGES");
-                s.canonic.iter().for_each(|x| println!("{:?}", x));
-            }
-        }
-
-        if let Err(e) = s.var_check() {
-            println!("{}", e);
-        }
+        assert!(g.var_check(), "The query is not a sharing equivalence.");
     }
 }
