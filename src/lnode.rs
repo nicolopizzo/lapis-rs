@@ -5,7 +5,6 @@ use std::{
     rc::{Rc, Weak},
 };
 
-
 use LNode::*;
 
 /// Enum representing a lambda node. Such node can have three forms:
@@ -137,6 +136,39 @@ impl LNode {
                 building: _,
                 queue: _,
             } => p.borrow_mut().push(parent),
+        }
+    }
+
+    pub fn new_app(left: Rc<LNode>, right: Rc<LNode>) -> Self {
+        App {
+            left,
+            right,
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        }
+    }
+
+    pub fn new_abs(body: Rc<LNode>) -> Self {
+        Abs {
+            body,
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        }
+    }
+
+    pub fn new_var() -> Self {
+        Var {
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
         }
     }
 
