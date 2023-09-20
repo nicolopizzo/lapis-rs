@@ -5,7 +5,7 @@ use dedukti_parse::{
     Command, Intro, Strict, Symb,
 };
 
-use crate::{lnode::LNode, lgraph::LGraph};
+use crate::lnode::LNode;
 
 type Term<'a> = dedukti_parse::Term<Symb<&'a str>, &'a str>;
 type Result<T> = std::result::Result<T, String>;
@@ -13,23 +13,22 @@ type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
 
 fn map_to_node(app: App<AppH<Symb<&str>, &str>>) -> Rc<LNode> {
     match app.head {
-        AppH::Atom(_name) => Rc::new(LNode::new_var()),
+        AppH::Atom(_name) => Rc::new(LNode::new_var(None)),
         AppH::Abst(_, _, _) => todo!(),
-        AppH::Prod(_, l, r) => {
+        AppH::Prod(x, a, t) => {
             // TODO: return a PI-node or an App-node?
-            let l = map_to_node(l.as_ref().clone());
-            let r = map_to_node(r.as_ref().clone());
+            let l = map_to_node(a.as_ref().clone());
+            let r = map_to_node(t.as_ref().clone());
 
-            let node = Rc::new(LNode::new_app(l.clone(), r.clone()));
+            let node = Rc::new(LNode::new_app(l.clone(), r.clone(), None));
 
             l.add_parent(node.clone());
-            r.add_parent(node.clone());
+            r.add_parent(node.clone()); 
 
             node
         }
     }
 
-    // None
 }
 
 pub fn parse(cmds: String) {
@@ -82,8 +81,3 @@ fn test_parse() {
 
     parse(cmds.to_string());
 }
-
-/*
-Intro(x, _, Declaration(z)) --> Var(x) ? Dovrebbe essere una costante
-Intro(f, _, Definition(Some(Prod(x, y)))) --> Var(f) ? Dovrebbe Essere una costante
-*/

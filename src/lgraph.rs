@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    rc::Rc,
-};
+use std::{fmt::Debug, rc::Rc};
 
 use crate::lnode::*;
 use LNode::*;
@@ -116,24 +113,7 @@ impl LGraph {
 
     fn enqueue_and_propagate(&self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
         match (m.as_ref(), c.as_ref()) {
-            (
-                Abs {
-                    body: b1,
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
-                },
-                Abs {
-                    body: b2,
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
-                },
-            ) => {
+            (Abs { body: b1, .. }, Abs { body: b2, .. }) => {
                 b1.undir().borrow_mut().push(Rc::downgrade(&b2));
                 b2.undir().borrow_mut().push(Rc::downgrade(&b1));
             }
@@ -141,20 +121,12 @@ impl LGraph {
                 App {
                     left: l1,
                     right: r1,
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
+                    ..
                 },
                 App {
                     left: l2,
                     right: r2,
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
+                    ..
                 },
             ) => {
                 l1.undir().borrow_mut().push(Rc::downgrade(&l2));
@@ -163,40 +135,8 @@ impl LGraph {
                 r1.undir().borrow_mut().push(Rc::downgrade(&r2));
                 r2.undir().borrow_mut().push(Rc::downgrade(&r1));
             }
-            (
-                Var {
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
-                },
-                Var {
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
-                },
-            ) => (),
-            (
-                BVar {
-                    binder: _,
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
-                },
-                BVar {
-                    binder: _,
-                    parent: _,
-                    undir: _,
-                    canonic: _,
-                    building: _,
-                    queue: _,
-                },
-            ) => (),
+            (Var { .. }, Var { .. }) => (),
+            (BVar { .. }, BVar { .. }) => (),
             (_, _) => {
                 return Err(String::from(
                     "Error: tried to compare two different kind of nodes.",
@@ -220,24 +160,7 @@ impl LGraph {
                     return false;
                 }
                 match (v.as_ref(), w.as_ref()) {
-                    (
-                        BVar {
-                            binder: b1,
-                            parent: _,
-                            undir: _,
-                            canonic: _,
-                            building: _,
-                            queue: _,
-                        },
-                        BVar {
-                            binder: b2,
-                            parent: _,
-                            undir: _,
-                            canonic: _,
-                            building: _,
-                            queue: _,
-                        },
-                    ) => {
+                    (BVar { binder: b1, .. }, BVar { binder: b2, .. }) => {
                         let b1_canonic = b1
                             .borrow()
                             .upgrade()
@@ -270,122 +193,30 @@ impl LGraph {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Weak};
+    use std::{
+        cell::RefCell,
+        rc::{Rc, Weak},
+    };
 
     use super::*;
     #[test]
     fn test() {
-        let var1 = Rc::new(BVar {
-            binder: RefCell::new(Weak::new()),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let abs1 = Rc::new(Abs {
-            body: var1.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let app1 = Rc::new(App {
-            left: abs1.clone(),
-            right: abs1.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
+        let var1 = Rc::new(LNode::new_bvar(None));
+        let abs1 = Rc::new(LNode::new_abs(var1.clone(), None));
+        let app1 = Rc::new(LNode::new_app(abs1.clone(), abs1.clone(), None));
 
-        let var2 = Rc::new(BVar {
-            binder: RefCell::new(Weak::new()),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let abs2 = Rc::new(Abs {
-            body: var2.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let app2 = Rc::new(App {
-            left: abs2.clone(),
-            right: abs2.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let root1 = Rc::new(App {
-            left: app1.clone(),
-            right: app2.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
+        let var2 = Rc::new(LNode::new_bvar(None));
+        let abs2 = Rc::new(LNode::new_abs(var2.clone(), None));
+        let app2 = Rc::new(LNode::new_app(abs2.clone(), abs2.clone(), None));
+        let root1 = Rc::new(LNode::new_app(app1.clone(), app2.clone(), None));
 
-        let var3 = Rc::new(BVar {
-            binder: RefCell::new(Weak::new()),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let abs3 = Rc::new(Abs {
-            body: var3.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let var4 = Rc::new(BVar {
-            binder: RefCell::new(Weak::new()),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let abs4 = Rc::new(Abs {
-            body: var4.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let app3 = Rc::new(App {
-            left: abs3.clone(),
-            right: abs4.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-        let root2 = Rc::new(App {
-            left: app3.clone(),
-            right: app3.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
+        let var3 = Rc::new(LNode::new_bvar(None));
+        let abs3 = Rc::new(LNode::new_abs(var3.clone(), None));
+        let var4 = Rc::new(LNode::new_bvar(None));
+        let abs4 = Rc::new(LNode::new_abs(var4.clone(), None));
+
+        let app3 = Rc::new(LNode::new_app(abs3.clone(), abs4.clone(), None));
+        let root2 = Rc::new(LNode::new_app(app3.clone(), app3.clone(), None));
 
         root1.undir().borrow_mut().push(Rc::downgrade(&root2));
         root2.undir().borrow_mut().push(Rc::downgrade(&root1));

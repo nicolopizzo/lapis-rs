@@ -22,6 +22,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
+        t: Option<Rc<Self>>,
     },
     Abs {
         body: Rc<Self>,
@@ -30,6 +31,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
+        t: Option<Rc<Self>>,
     },
     BVar {
         binder: RefCell<Weak<Self>>,
@@ -38,6 +40,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
+        t: Option<Rc<Self>>,
     },
     Var {
         parent: RefCell<Vec<Weak<Self>>>,
@@ -45,6 +48,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
+        t: Option<Rc<Self>>,
     },
 }
 
@@ -62,38 +66,10 @@ impl PartialEq for LNode {
 impl Debug for LNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Abs {
-                body: _,
-                parent: _,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => f.write_fmt(format_args!("Abs: {:p}", self)),
-            App {
-                left: _,
-                right: _,
-                parent: _,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => f.write_fmt(format_args!("App: {:p}", self)),
-            BVar {
-                binder: _,
-                parent: _,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => f.write_fmt(format_args!("Var: {:p}", self)),
-            Var {
-                parent: _,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => f.write_fmt(format_args!("Var: {:p}", self)),
+            Abs { .. } => f.write_fmt(format_args!("Abs: {:p}", self)),
+            App { .. } => f.write_fmt(format_args!("App: {:p}", self)),
+            BVar { .. } => f.write_fmt(format_args!("Var: {:p}", self)),
+            Var { .. } => f.write_fmt(format_args!("Var: {:p}", self)),
         }
     }
 }
@@ -112,37 +88,19 @@ impl LNode {
                 undir: _,
                 building: _,
                 queue: _,
+                t,
             } => p.borrow_mut().push(parent),
-            Abs {
-                body: _,
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p.borrow_mut().push(parent),
-            BVar {
-                binder: _,
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p.borrow_mut().push(parent),
-            Var {
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p.borrow_mut().push(parent),
+            Abs { parent: p, .. } => p.borrow_mut().push(parent),
+            BVar { parent: p, .. } => p.borrow_mut().push(parent),
+            Var { parent: p, .. } => p.borrow_mut().push(parent),
         }
     }
 
-    pub fn new_app(left: Rc<LNode>, right: Rc<LNode>) -> Self {
+    pub fn new_app(left: Rc<Self>, right: Rc<Self>, t: Option<Rc<Self>>) -> Self {
         App {
             left,
             right,
+            t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -151,9 +109,10 @@ impl LNode {
         }
     }
 
-    pub fn new_abs(body: Rc<LNode>) -> Self {
+    pub fn new_abs(body: Rc<Self>, t: Option<Rc<Self>>) -> Self {
         Abs {
             body,
+            t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -162,260 +121,91 @@ impl LNode {
         }
     }
 
-    pub fn new_var() -> Self {
+    pub fn new_var(t: Option<Rc<Self>>) -> Self {
         Var {
+            t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
+        }
+    }
+
+    pub fn new_bvar(t: Option<Rc<Self>>) -> Self {
+        BVar {
+            binder: RefCell::new(Weak::new()),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+            t,
         }
     }
 
     pub(crate) fn is_abs(&self) -> bool {
-        matches!(
-            self,
-            Abs {
-                body: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue: _
-            }
-        )
+        matches!(self, Abs { .. })
     }
 
     pub(crate) fn is_bvar(&self) -> bool {
-        matches!(
-            self,
-            BVar {
-                binder: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue: _
-            }
-        )
+        matches!(self, BVar { .. })
     }
 
     pub(crate) fn is_var(&self) -> bool {
-        matches!(
-            self,
-            Var {
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue: _
-            }
-        )
+        matches!(self, Var { .. })
     }
 
     pub(crate) fn is_app(&self) -> bool {
-        matches!(
-            self,
-            App {
-                left: _,
-                right: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue: _
-            }
-        )
+        matches!(self, App { .. })
     }
 
     pub(crate) fn undir(&self) -> &RefCell<Vec<Weak<Self>>> {
         match self {
-            App {
-                left: _,
-                right: _,
-                parent: _,
-                undir,
-                canonic: _,
-                building: _,
-                queue: _,
-            } => undir,
-            Abs {
-                body: _,
-                parent: _,
-                undir,
-                canonic: _,
-                building: _,
-                queue: _,
-            } => undir,
-            BVar {
-                binder: _,
-                parent: _,
-                undir,
-                canonic: _,
-                building: _,
-                queue: _,
-            } => undir,
-            Var {
-                parent: _,
-                undir,
-                canonic: _,
-                building: _,
-                queue: _,
-            } => undir,
+            App { undir, .. } => undir,
+            Abs { undir, .. } => undir,
+            BVar { undir, .. } => undir,
+            Var { undir, .. } => undir,
         }
     }
 
     pub(crate) fn canonic(&self) -> &RefCell<Weak<Self>> {
         match self {
-            App {
-                left: _,
-                right: _,
-                parent: _,
-                undir: _,
-                canonic,
-                building: _,
-                queue: _,
-            } => canonic,
-            Abs {
-                body: _,
-                parent: _,
-                undir: _,
-                canonic,
-                building: _,
-                queue: _,
-            } => canonic,
-            BVar {
-                binder: _,
-                parent: _,
-                undir: _,
-                canonic,
-                building: _,
-                queue: _,
-            } => canonic,
-            Var {
-                parent: _,
-                undir: _,
-                canonic,
-                building: _,
-                queue: _,
-            } => canonic,
+            App { canonic, .. } => canonic,
+            Abs { canonic, .. } => canonic,
+            BVar { canonic, .. } => canonic,
+            Var { canonic, .. } => canonic,
         }
     }
 
     pub(crate) fn building(&self) -> &RefCell<bool> {
         match self {
-            App {
-                left: _,
-                right: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building,
-                queue: _,
-            } => building,
-            Abs {
-                body: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building,
-                queue: _,
-            } => building,
-            BVar {
-                binder: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building,
-                queue: _,
-            } => building,
-            Var {
-                parent: _,
-                undir: _,
-                canonic: _,
-                building,
-                queue: _,
-            } => building,
+            App { building, .. } => building,
+            Abs { building, .. } => building,
+            BVar { building, .. } => building,
+            Var { building, .. } => building,
         }
     }
 
     pub(crate) fn queue(&self) -> &RefCell<VecDeque<Weak<Self>>> {
         match self {
-            App {
-                left: _,
-                right: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue,
-            } => queue,
-            Abs {
-                body: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue,
-            } => queue,
-            BVar {
-                binder: _,
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue,
-            } => queue,
-            Var {
-                parent: _,
-                undir: _,
-                canonic: _,
-                building: _,
-                queue,
-            } => queue,
+            App { queue, .. } => queue,
+            Abs { queue, .. } => queue,
+            BVar { queue, .. } => queue,
+            Var { queue, .. } => queue,
         }
     }
 
     /// Returns the reference to the parent of the current node.
     pub(crate) fn get_parent(&self) -> Vec<Weak<Self>> {
-        let p = match self {
-            App {
-                left: _,
-                right: _,
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p,
-            Abs {
-                body: _,
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p,
-            BVar {
-                binder: _,
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p,
-            Var {
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => p,
+        let parent = match self {
+            App { parent, .. } => parent,
+            Abs { parent, .. } => parent,
+            BVar { parent, .. } => parent,
+            Var { parent, .. } => parent,
         };
 
-        let p = p.borrow();
-        let p = p.clone();
-        p
+        parent.borrow().clone()
     }
 
     /// Binds a `BVar` node to an `Abs` node.
@@ -423,16 +213,10 @@ impl LNode {
         if !self.is_bvar() || abs.is_abs() {
             // TODO: fail
         }
+
         let abs = Rc::downgrade(&abs);
         match &*self {
-            BVar {
-                binder: x,
-                parent: _,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-            } => *x.borrow_mut() = abs,
+            BVar { binder, .. } => *binder.borrow_mut() = abs,
             _ => (),
         }
     }
