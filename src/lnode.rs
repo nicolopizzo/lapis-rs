@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::VecDeque,
     fmt::Debug,
+    ptr,
     rc::{Rc, Weak},
 };
 
@@ -22,7 +23,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        t: Option<Rc<Self>>,
+        // t: Option<Rc<Self>>,
     },
     Abs {
         body: Rc<Self>,
@@ -31,7 +32,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        t: Option<Rc<Self>>,
+        // t: Option<Rc<Self>>,
     },
     BVar {
         binder: RefCell<Weak<Self>>,
@@ -66,10 +67,23 @@ impl PartialEq for LNode {
 impl Debug for LNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Abs { .. } => f.write_fmt(format_args!("Abs: {:p}", self)),
-            App { .. } => f.write_fmt(format_args!("App: {:p}", self)),
-            BVar { .. } => f.write_fmt(format_args!("Var: {:p}", self)),
-            Var { .. } => f.write_fmt(format_args!("Var: {:p}", self)),
+            Abs { body, .. } => f
+                .debug_struct("Abs")
+                .field("body", body)
+                // .field("t", t)
+                .finish(),
+            App { left, right, .. } => f
+                .debug_struct("App")
+                .field("left", left)
+                .field("right", right)
+                // .field("t", t)
+                .finish(),
+            BVar { binder, t, .. } => f
+                .debug_struct("BVar")
+                .field("binder", binder)
+                .field("t", t)
+                .finish(),
+            Var { t, .. } => f.debug_struct("Var").field("t", t).finish(),
         }
     }
 }
@@ -80,27 +94,18 @@ impl LNode {
     pub(crate) fn add_parent(&self, p: Rc<LNode>) {
         let parent = Rc::downgrade(&p);
         match self {
-            App {
-                left: _,
-                right: _,
-                parent: p,
-                canonic: _,
-                undir: _,
-                building: _,
-                queue: _,
-                t,
-            } => p.borrow_mut().push(parent),
+            App { parent: p, .. } => p.borrow_mut().push(parent),
             Abs { parent: p, .. } => p.borrow_mut().push(parent),
             BVar { parent: p, .. } => p.borrow_mut().push(parent),
             Var { parent: p, .. } => p.borrow_mut().push(parent),
         }
     }
 
-    pub fn new_app(left: Rc<Self>, right: Rc<Self>, t: Option<Rc<Self>>) -> Self {
+    pub fn new_app(left: Rc<Self>, right: Rc<Self>) -> Self {
         App {
             left,
             right,
-            t,
+            // t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -109,10 +114,10 @@ impl LNode {
         }
     }
 
-    pub fn new_abs(body: Rc<Self>, t: Option<Rc<Self>>) -> Self {
+    pub fn new_abs(body: Rc<Self>) -> Self {
         Abs {
             body,
-            t,
+            // t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -158,6 +163,15 @@ impl LNode {
 
     pub(crate) fn is_app(&self) -> bool {
         matches!(self, App { .. })
+    }
+
+    pub fn get_type(&self) -> Option<Rc<Self>> {
+        match self {
+            App { .. } => None,
+            Abs { .. } => None,
+            Var { t, .. } => t.clone(),
+            BVar { t, .. } => t.clone(),
+        }
     }
 
     pub(crate) fn undir(&self) -> &RefCell<Vec<Weak<Self>>> {
