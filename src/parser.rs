@@ -1,15 +1,39 @@
-use std::{collections::HashMap, rc::Rc};
+use core::panic;
+use std::{collections::HashMap, fs, hash::Hash, rc::Rc};
 
 use dedukti_parse::{
     term::{App, AppH},
-    Command, Intro, Strict, Symb,
+    Command, Intro, Rule, Strict, Symb,
 };
 
-use crate::lnode::LNode;
+use crate::{lgraph::LGraph, lnode::LNode};
 
 type Term<'a> = dedukti_parse::Term<Symb<&'a str>, &'a str>;
 type Result<T> = std::result::Result<T, String>;
 type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
+
+pub struct Rewrite(Rc<LNode>, Rc<LNode>);
+pub struct Context(HashMap<String, Rc<LNode>>, Vec<Rewrite>);
+
+fn parse_rule(
+    gamma: &mut HashMap<String, Rc<LNode>>,
+    rule: Rule<&str, App<AppH<Symb<&str>, &str>>>,
+) -> Rewrite {
+    // Clone gamma to have a local context.
+    let mut gamma = gamma.clone();
+    for v in rule.ctx {
+        if let Some(ty) = v.1 {
+            // TODO: use bound variables
+            let ty = map_to_node(&mut gamma, ty);
+            gamma.insert(v.0.to_string(), ty.unwrap());
+        }
+    }
+
+    let lhs = map_to_node(&mut gamma, rule.lhs).unwrap();
+    let rhs = map_to_node(&mut gamma, rule.rhs).unwrap();
+
+    Rewrite(lhs, rhs)
+}
 
 fn map_to_node(
     gamma: &mut HashMap<String, Rc<LNode>>,
@@ -34,42 +58,58 @@ fn map_to_node(
             Some(Rc::new(LNode::new_abs(body)))
         }
         AppH::Prod(x, a, t) => {
-            let l = map_to_node(gamma, a.as_ref().clone()).unwrap();
-            // TODO: bind x to l in gamma if the product is named?
-            if let Some(x) = x {
-                //TODO: If there is no need to memorize the variable name, can do this?
-                // let l = LNode::new_var(Some(l));
+            let a = map_to_node(gamma, a.as_ref().clone());
+            match x {
+                Some(x) => {
+                    let mut gamma = gamma.clone();
+                    // If product has name `x`, save it as a variable node with type `a`.
+                    let a = Rc::new(LNode::new_var(a));
+                    gamma.insert(x.to_string(), a.clone());
+                    let t = map_to_node(&mut gamma, t.as_ref().clone()).unwrap();
 
-                gamma.insert(x.to_string(), l.clone());
+                    let node = Rc::new(LNode::new_app(a.clone(), t.clone()));
+
+                    a.add_parent(node.clone());
+                    t.add_parent(node.clone());
+
+                    Some(node)
+                }
+                None => {
+                    let a = a.unwrap();
+                    let t = map_to_node(gamma, t.as_ref().clone()).unwrap();
+                    let node = Rc::new(LNode::new_app(a.clone(), t.clone()));
+
+                    a.add_parent(node.clone());
+                    t.add_parent(node.clone());
+
+                    Some(node)
+                }
             }
-
-            let r = map_to_node(gamma, t.as_ref().clone()).unwrap();
-
-            let node = Rc::new(LNode::new_app(l.clone(), r.clone()));
-
-            l.add_parent(node.clone());
-            r.add_parent(node.clone());
-
-            Some(node)
         }
     };
 
     let mut res = head;
     // Apply all the arguments to the head node (left application)
     for arg in app.args {
-        let t = map_to_node(gamma, arg).unwrap();
-        res = Some(Rc::new(LNode::new_app(res.unwrap(), t)));
+        // println!("{:#?}", arg);
+        let t = map_to_node(gamma, arg.clone());
+        if let Some(t) = t {
+            res = Some(Rc::new(LNode::new_app(res.unwrap(), t)));
+        } else {
+            // TODO: if `t` is None, infer type from definition.
+            panic!("Something wrong.")
+        }
     }
 
     res
 }
 
-pub fn parse(cmds: String) -> HashMap<String, Rc<LNode>> {
+pub fn parse(cmds: String) -> Context {
     let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse = parse.unwrap();
 
     let mut gamma = HashMap::new();
-    let mut rules = Vec::new();
+    let mut rew_rules = Vec::new();
     for cmd in parse {
         match cmd {
             Command::Intro(name, _path, f) => match f {
@@ -97,40 +137,70 @@ pub fn parse(cmds: String) -> HashMap<String, Rc<LNode>> {
                         gamma.insert(name.to_string(), node);
                     }
                 }
-                Intro::Theorem(_, _) => todo!(),
+                Intro::Theorem(_, _) => {
+                    // TODO: parse thm
+                    todo!()
+                }
             },
-            Command::Rules(r) => rules.append(&mut r.clone()),
+            Command::Rules(rules) => {
+                let mut rules = rules
+                    .iter()
+                    .map(|rule| parse_rule(&mut gamma, rule.clone()))
+                    .collect();
+
+                rew_rules.append(&mut rules);
+            }
         }
     }
 
-    gamma
+    Context(gamma, rew_rules)
 }
 
-#[test]
-fn test_parse() {
-    let cmds = r#"
-        Nat: Type.
-        zero: Nat.
-        def S: Nat -> Nat.
-        def one := S (S zero).
-        def plus: Nat -> Nat -> Nat.
-        [n: Nat] plus zero n --> n.
-        [m: Nat,n : Nat] plus (S m) n --> S (plus m n).
-        "#;
+mod tests {
+    use super::*;
+    use std::fs;
 
-    let gamma = parse(cmds.to_string());
+    #[test]
+    fn test_parse() {
+        let file_path = "examples/vec.dk";
+        let cmds = fs::read_to_string(file_path);
+        assert!(cmds.is_ok(), "Error reading file");
+        let cmds = cmds.unwrap();
 
-    let nat = gamma.get("Nat").unwrap();
-    let zero = gamma.get("zero").unwrap();
-    let one = gamma.get("one").unwrap();
-    let s = gamma.get("S").unwrap();
-    let plus = gamma.get("plus").unwrap();
+        // DEBUG
+        let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
+        let parse = parse.unwrap();
 
-    // DEBUG
-    // let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
-    // let parse = parse.unwrap();
+        parse.iter().for_each(|x| println!("{:?}", x))
+    }
 
-    assert_eq!(zero.get_type().unwrap(), *nat);
-    // println!("{:#?}", plus);
-    assert_ne!(one.get_type().unwrap(), *s);
+    #[test]
+    fn test_simple() {
+        let file_path = "examples/nat.dk";
+        let cmds = fs::read_to_string(file_path);
+        assert!(cmds.is_ok(), "Error reading file");
+        let cmds = cmds.unwrap();
+
+        let Context(gamma, _) = parse(cmds.to_string());
+
+        let nat = gamma.get("Nat").unwrap();
+        let zero = gamma.get("zero").unwrap();
+        let s = gamma.get("S").unwrap();
+        let plus = gamma.get("plus").unwrap();
+
+        assert_eq!(zero.get_type().unwrap(), *nat);
+    }
+
+    #[test]
+    fn test_dependant() {
+        let file_path = "examples/vec.dk";
+        let cmds = fs::read_to_string(file_path);
+        assert!(cmds.is_ok(), "Error reading file");
+        let cmds = cmds.unwrap();
+
+        let Context(gamma, _) = parse(cmds.to_string());
+        let cons = gamma.get("cons");
+
+        println!("{:#?}", cons);
+    }
 }

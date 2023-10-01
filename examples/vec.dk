@@ -1,0 +1,17 @@
+Nat: Type.
+
+zero: Nat.
+
+def S: Nat -> Nat.
+
+def plus: Nat -> Nat -> Nat.
+[n: Nat] plus zero n --> n.
+[m: Nat,n : Nat] plus (S m) n --> S (plus m n).
+
+A: Type.
+Vector: Nat -> Type.
+nil: Vector zero.
+cons: n:Nat -> A -> Vector n -> Vector (S n).
+
+def append: n:Nat -> Vector n -> m:Nat -> Vector m -> Vector (plus n m).
+[ n: Nat, v: Vector n ] append zero nil n v --> v.
