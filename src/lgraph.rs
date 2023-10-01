@@ -202,21 +202,21 @@ mod tests {
     #[test]
     fn test() {
         let var1 = Rc::new(LNode::new_bvar(None));
-        let abs1 = Rc::new(LNode::new_abs(var1.clone(), None));
-        let app1 = Rc::new(LNode::new_app(abs1.clone(), abs1.clone(), None));
+        let abs1 = Rc::new(LNode::new_abs(var1.clone()));
+        let app1 = Rc::new(LNode::new_app(abs1.clone(), abs1.clone()));
 
         let var2 = Rc::new(LNode::new_bvar(None));
-        let abs2 = Rc::new(LNode::new_abs(var2.clone(), None));
-        let app2 = Rc::new(LNode::new_app(abs2.clone(), abs2.clone(), None));
-        let root1 = Rc::new(LNode::new_app(app1.clone(), app2.clone(), None));
+        let abs2 = Rc::new(LNode::new_abs(var2.clone()));
+        let app2 = Rc::new(LNode::new_app(abs2.clone(), abs2.clone()));
+        let root1 = Rc::new(LNode::new_app(app1.clone(), app2.clone()));
 
         let var3 = Rc::new(LNode::new_bvar(None));
-        let abs3 = Rc::new(LNode::new_abs(var3.clone(), None));
+        let abs3 = Rc::new(LNode::new_abs(var3.clone()));
         let var4 = Rc::new(LNode::new_bvar(None));
-        let abs4 = Rc::new(LNode::new_abs(var4.clone(), None));
+        let abs4 = Rc::new(LNode::new_abs(var4.clone()));
 
-        let app3 = Rc::new(LNode::new_app(abs3.clone(), abs4.clone(), None));
-        let root2 = Rc::new(LNode::new_app(app3.clone(), app3.clone(), None));
+        let app3 = Rc::new(LNode::new_app(abs3.clone(), abs4.clone()));
+        let root2 = Rc::new(LNode::new_app(app3.clone(), app3.clone()));
 
         root1.undir().borrow_mut().push(Rc::downgrade(&root2));
         root2.undir().borrow_mut().push(Rc::downgrade(&root1));

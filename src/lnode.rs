@@ -41,7 +41,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        t: Option<Rc<Self>>,
+        ty: Option<Rc<Self>>,
     },
     Var {
         parent: RefCell<Vec<Weak<Self>>>,
@@ -49,7 +49,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        t: Option<Rc<Self>>,
+        ty: Option<Rc<Self>>,
     },
 }
 
@@ -78,12 +78,12 @@ impl Debug for LNode {
                 .field("right", right)
                 // .field("t", t)
                 .finish(),
-            BVar { binder, t, .. } => f
+            BVar { binder, ty: t, .. } => f
                 .debug_struct("BVar")
                 .field("binder", binder)
                 .field("t", t)
                 .finish(),
-            Var { t, .. } => f.debug_struct("Var").field("t", t).finish(),
+            Var { ty: t, .. } => f.debug_struct("Var").field("t", t).finish(),
         }
     }
 }
@@ -128,7 +128,7 @@ impl LNode {
 
     pub fn new_var(t: Option<Rc<Self>>) -> Self {
         Var {
-            t,
+            ty: t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -145,7 +145,7 @@ impl LNode {
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
-            t,
+            ty: t,
         }
     }
 
@@ -169,8 +169,8 @@ impl LNode {
         match self {
             App { .. } => None,
             Abs { .. } => None,
-            Var { t, .. } => t.clone(),
-            BVar { t, .. } => t.clone(),
+            Var { ty: t, .. } => t.clone(),
+            BVar { ty: t, .. } => t.clone(),
         }
     }
 
