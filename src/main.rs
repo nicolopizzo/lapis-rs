@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 mod lgraph;
 mod lnode;
-// mod check;
 mod parser;
-
+mod check;
 fn main() {}
