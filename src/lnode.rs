@@ -2,8 +2,7 @@ use std::{
     cell::RefCell,
     collections::VecDeque,
     fmt::Debug,
-    ptr,
-    rc::{Rc, Weak},
+    rc::{Rc, Weak}, hash::Hash,
 };
 
 use LNode::*;
@@ -13,7 +12,6 @@ use LNode::*;
 /// - Abstraction: an abstraction node has one child.
 /// - Variable: this kind of node can represent bound and unbound variables.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub enum LNode {
     App {
         left: Rc<Self>,
@@ -23,16 +21,24 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        // t: Option<Rc<Self>>,
     },
-    Abs {
+    Prod {
+        bvar: Rc<Self>,
         body: Rc<Self>,
         parent: RefCell<Vec<Weak<Self>>>,
         undir: RefCell<Vec<Weak<Self>>>,
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        // t: Option<Rc<Self>>,
+    },
+    Abs {
+        bvar: Rc<Self>,
+        body: Rc<Self>,
+        parent: RefCell<Vec<Weak<Self>>>,
+        undir: RefCell<Vec<Weak<Self>>>,
+        canonic: RefCell<Weak<Self>>,
+        building: RefCell<bool>,
+        queue: RefCell<VecDeque<Weak<Self>>>,
     },
     BVar {
         binder: RefCell<Weak<Self>>,
@@ -41,6 +47,8 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
+        subs_to: RefCell<Option<Rc<Self>>>,
+        // ty must be a `Prod` or a `Var` node.
         ty: Option<Rc<Self>>,
     },
     Var {
@@ -49,6 +57,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
+        // ty must be a `Prod` or a `Var` node.
         ty: Option<Rc<Self>>,
     },
 }
@@ -78,14 +87,30 @@ impl Debug for LNode {
                 .field("right", right)
                 // .field("t", t)
                 .finish(),
-            BVar { binder, ty: t, .. } => f
+            Prod { bvar: left, body: right, .. } => f
+                .debug_struct("Prod")
+                .field("left", left)
+                .field("right", right)
+                // .field("t", t)
+                .finish(),
+            BVar { ty: t, .. } => f
                 .debug_struct("BVar")
-                .field("binder", binder)
+                // .field("binder", binder)
                 .field("t", t)
                 .finish(),
             Var { ty: t, .. } => f.debug_struct("Var").field("t", t).finish(),
         }
     }
+}
+
+impl Hash for LNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::addr_of!(self).hash(state);
+    }
+}
+
+impl Eq for LNode {
+    
 }
 
 #[allow(dead_code)]
@@ -95,6 +120,7 @@ impl LNode {
         let parent = Rc::downgrade(&p);
         match self {
             App { parent: p, .. } => p.borrow_mut().push(parent),
+            Prod { parent: p, .. } => p.borrow_mut().push(parent),
             Abs { parent: p, .. } => p.borrow_mut().push(parent),
             BVar { parent: p, .. } => p.borrow_mut().push(parent),
             Var { parent: p, .. } => p.borrow_mut().push(parent),
@@ -114,8 +140,22 @@ impl LNode {
         }
     }
 
-    pub fn new_abs(body: Rc<Self>) -> Self {
+    pub fn new_prod(bvar: Rc<Self>, body: Rc<Self>) -> Self {
+        Prod {
+            bvar,
+            body,
+            // t,
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        }
+    }
+
+    pub fn new_abs(bvar: Rc<Self>, body: Rc<Self>) -> Self {
         Abs {
+            bvar,
             body,
             // t,
             parent: RefCell::new(Vec::new()),
@@ -145,6 +185,7 @@ impl LNode {
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
+            subs_to: RefCell::new(None),
             ty: t,
         }
     }
@@ -167,16 +208,24 @@ impl LNode {
 
     pub fn get_type(&self) -> Option<Rc<Self>> {
         match self {
-            App { .. } => None,
-            Abs { .. } => None,
             Var { ty: t, .. } => t.clone(),
             BVar { ty: t, .. } => t.clone(),
+            _ => None,
         }
+    }
+
+    /// Reset all fields for sharing equality algorithm.
+    pub fn reset(&self) {
+        self.set_canonic(Weak::new());
+        self.set_building(false);
+        *self.undir().borrow_mut() = Vec::new();
+        *self.queue().borrow_mut() = VecDeque::new();
     }
 
     pub(crate) fn undir(&self) -> &RefCell<Vec<Weak<Self>>> {
         match self {
             App { undir, .. } => undir,
+            Prod { undir, .. } => undir,
             Abs { undir, .. } => undir,
             BVar { undir, .. } => undir,
             Var { undir, .. } => undir,
@@ -186,24 +235,47 @@ impl LNode {
     pub(crate) fn canonic(&self) -> &RefCell<Weak<Self>> {
         match self {
             App { canonic, .. } => canonic,
+            Prod { canonic, .. } => canonic,
             Abs { canonic, .. } => canonic,
             BVar { canonic, .. } => canonic,
             Var { canonic, .. } => canonic,
         }
     }
 
+    pub(crate) fn set_canonic(&self, value: Weak<Self>) {
+        match self {
+            App { canonic, .. } => *canonic.borrow_mut() = value,
+            Prod { canonic, .. } => *canonic.borrow_mut() = value,
+            Abs { canonic, .. } => *canonic.borrow_mut() = value,
+            BVar { canonic, .. } => *canonic.borrow_mut() = value,
+            Var { canonic, .. } => *canonic.borrow_mut() = value,
+        }
+    }
+
     pub(crate) fn building(&self) -> &RefCell<bool> {
         match self {
             App { building, .. } => building,
+            Prod { building, .. } => building,
             Abs { building, .. } => building,
             BVar { building, .. } => building,
             Var { building, .. } => building,
         }
     }
 
+    pub(crate) fn set_building(&self, b: bool) {
+        match self {
+            App { building, .. } => *building.borrow_mut() = b,
+            Prod { building, .. } => *building.borrow_mut() = b,
+            Abs { building, .. } => *building.borrow_mut() = b,
+            BVar { building, .. } => *building.borrow_mut() = b,
+            Var { building, .. } => *building.borrow_mut() = b,
+        }
+    }
+
     pub(crate) fn queue(&self) -> &RefCell<VecDeque<Weak<Self>>> {
         match self {
             App { queue, .. } => queue,
+            Prod { queue, .. } => queue,
             Abs { queue, .. } => queue,
             BVar { queue, .. } => queue,
             Var { queue, .. } => queue,
@@ -214,6 +286,7 @@ impl LNode {
     pub(crate) fn get_parent(&self) -> Vec<Weak<Self>> {
         let parent = match self {
             App { parent, .. } => parent,
+            Prod { parent, .. } => parent,
             Abs { parent, .. } => parent,
             BVar { parent, .. } => parent,
             Var { parent, .. } => parent,
@@ -232,6 +305,41 @@ impl LNode {
         match &*self {
             BVar { binder, .. } => *binder.borrow_mut() = abs,
             _ => (),
+        }
+    }
+
+    /// Returns `true` if the lnode is [`Prod`].
+    ///
+    /// [`Prod`]: LNode::Prod
+    pub fn is_prod(&self) -> bool {
+        matches!(self, Self::Prod { .. })
+    }
+
+    pub fn subs_to(&self, x: Rc<Self>) {
+        match self {
+            BVar { subs_to, .. } => {
+                *subs_to.borrow_mut() = Some(x);
+            }
+
+            _ => unreachable!("You can substitute only a bound variable"),
+        }
+    }
+
+    pub fn unsub(&self) {
+        match self {
+            BVar { subs_to, .. } => {
+                *subs_to.borrow_mut() = None;
+            }
+
+            _ => unreachable!("You can substitute only a bound variable"),
+        }
+    }
+
+    pub fn get_sub(&self) -> Option<Rc<Self>> {
+        match self {
+            BVar { subs_to, .. } => subs_to.borrow().clone(),
+
+            _ => unreachable!("You can substitute only a bound variable"),
         }
     }
 }

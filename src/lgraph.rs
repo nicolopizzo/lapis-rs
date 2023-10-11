@@ -1,4 +1,4 @@
-use std::{fmt::Debug, rc::Rc};
+use std::{collections::HashSet, fmt::Debug, rc::Rc, vec};
 
 use crate::lnode::*;
 use LNode::*;
@@ -6,24 +6,67 @@ use LNode::*;
 /// Structure that defines a Lambda-Graph (see [this](https://arxiv.org/pdf/1907.06101.pdf)).
 #[derive(Clone, Debug)]
 pub struct LGraph {
-    nodes: Vec<Rc<LNode>>,
+    nodes: HashSet<Rc<LNode>>,
 }
 
-#[allow(dead_code)]
 impl LGraph {
     /// Returns an empty LGraph.
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: HashSet::new(),
+        }
     }
 
-    /// Returns an LGraph that has `v` as nodes.
-    pub fn from(v: Vec<Rc<LNode>>) -> Self {
-        Self { nodes: v }
+    /// Returns an LGraph that creates an edge between `r2` and `r1` and contains the children
+    /// of both nodes.
+    pub fn from_roots(r1: Rc<LNode>, r2: Rc<LNode>) -> Self {
+        // Creo un arco tra le due radici
+        r1.undir().borrow_mut().push(Rc::downgrade(&r2));
+        r2.undir().borrow_mut().push(Rc::downgrade(&r1));
+
+        let mut nodes = HashSet::new();
+
+        Self::rec_from(&mut nodes, r1);
+        Self::rec_from(&mut nodes, r2);
+
+        Self { nodes }
+    }
+
+    fn rec_from(nodes: &mut HashSet<Rc<LNode>>, node: Rc<LNode>) {
+        if !nodes.contains(&node) {
+            nodes.insert(node.clone());
+        }
+
+        match node.as_ref() {
+            App { left, right, .. } => {
+                if !nodes.contains(left) {
+                    nodes.insert(left.clone());
+                    Self::rec_from(nodes, left.clone());
+                }
+
+                if !nodes.contains(right) {
+                    nodes.insert(right.clone());
+                    Self::rec_from(nodes, right.clone());
+                }
+            }
+            Prod { bvar, body, .. } => {
+                if !nodes.contains(bvar) {
+                    nodes.insert(bvar.clone());
+                    Self::rec_from(nodes, bvar.clone());
+                }
+
+                if !nodes.contains(body) {
+                    nodes.insert(body.clone());
+                    Self::rec_from(nodes, body.clone());
+                }
+            }
+            _ => (),
+        }
     }
 
     /// Adds `node` to the nodes of the graph.
     pub fn add_node(&mut self, node: Rc<LNode>) {
-        self.nodes.push(node);
+        self.nodes.insert(node);
     }
 
     fn var_nodes(&self) -> Vec<Rc<LNode>> {
@@ -53,8 +96,8 @@ impl LGraph {
     }
 
     fn build_equivalence_class(&self, c: Rc<LNode>) -> Result<(), String> {
-        *c.canonic().borrow_mut() = Rc::downgrade(&c);
-        *c.building().borrow_mut() = true;
+        c.set_canonic(Rc::downgrade(&c));
+        c.set_building(true);
         c.queue().borrow_mut().push_back(Rc::downgrade(&c));
 
         loop {
@@ -65,9 +108,11 @@ impl LGraph {
             let n = n.unwrap().upgrade().unwrap();
 
             // For every parent m of n ...
+            // TODO: se la bvar è istanziata, itero sui padri.
             for m in n.get_parent().iter().map(|x| x.upgrade()) {
                 if let Some(m) = m {
-                    match m.canonic().borrow().upgrade() {
+                    let parent = m.clone().canonic().borrow().upgrade();
+                    match parent {
                         None => {
                             if let Err(e) = self.build_equivalence_class(m.clone()) {
                                 return Err(e);
@@ -106,14 +151,15 @@ impl LGraph {
             }
         }
 
-        *c.building().borrow_mut() = false;
+        c.set_building(false);
 
         Ok(())
     }
 
     fn enqueue_and_propagate(&self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
         match (m.as_ref(), c.as_ref()) {
-            (Abs { body: b1, .. }, Abs { body: b2, .. }) => {
+            (Prod { body: b1, .. }, Prod { body: b2, .. })
+            | (Abs { body: b1, .. }, Abs { body: b2, .. }) => {
                 b1.undir().borrow_mut().push(Rc::downgrade(&b2));
                 b2.undir().borrow_mut().push(Rc::downgrade(&b1));
             }
@@ -137,6 +183,26 @@ impl LGraph {
             }
             (Var { .. }, Var { .. }) => (),
             (BVar { .. }, BVar { .. }) => (),
+            (BVar { subs_to, .. }, _) => {
+                if let Some(sub) = subs_to.borrow().clone() {
+                    return self.enqueue_and_propagate(sub, c);
+                } else {
+                    return Err(String::from(
+                        "Error: tried to compare two different kind of nodes.",
+                    ));
+                }
+            }
+            (_, BVar { subs_to, .. }) => {
+                // TODO: Se la prima `BVar` ha una sostituzione, non per forza la sto confrontando con una BVar
+                // Devo quindi effettuare `enqueue_and_propagate` della sostituzione con v.
+                if let Some(sub) = subs_to.borrow().clone() {
+                    return self.enqueue_and_propagate(sub, m);
+                } else {
+                    return Err(String::from(
+                        "Error: tried to compare two different kind of nodes.",
+                    ));
+                }
+            }
             (_, _) => {
                 return Err(String::from(
                     "Error: tried to compare two different kind of nodes.",
@@ -144,7 +210,7 @@ impl LGraph {
             }
         }
 
-        *m.canonic().borrow_mut() = Rc::downgrade(&c);
+        m.set_canonic(Rc::downgrade(&c));
         c.queue().borrow_mut().push_back(Rc::downgrade(&m));
 
         Ok(())
@@ -195,25 +261,29 @@ impl LGraph {
 mod tests {
     use std::{
         cell::RefCell,
+        collections::HashMap,
+        hash,
         rc::{Rc, Weak},
     };
+
+    use crate::parser::print_context;
 
     use super::*;
     #[test]
     fn test() {
         let var1 = Rc::new(LNode::new_bvar(None));
-        let abs1 = Rc::new(LNode::new_abs(var1.clone()));
+        let abs1 = Rc::new(LNode::new_prod(var1.clone(), var1.clone()));
         let app1 = Rc::new(LNode::new_app(abs1.clone(), abs1.clone()));
 
         let var2 = Rc::new(LNode::new_bvar(None));
-        let abs2 = Rc::new(LNode::new_abs(var2.clone()));
+        let abs2 = Rc::new(LNode::new_prod(var2.clone(), var2.clone()));
         let app2 = Rc::new(LNode::new_app(abs2.clone(), abs2.clone()));
         let root1 = Rc::new(LNode::new_app(app1.clone(), app2.clone()));
 
         let var3 = Rc::new(LNode::new_bvar(None));
-        let abs3 = Rc::new(LNode::new_abs(var3.clone()));
+        let abs3 = Rc::new(LNode::new_prod(var3.clone(), var3.clone()));
         let var4 = Rc::new(LNode::new_bvar(None));
-        let abs4 = Rc::new(LNode::new_abs(var4.clone()));
+        let abs4 = Rc::new(LNode::new_prod(var4.clone(), var4.clone()));
 
         let app3 = Rc::new(LNode::new_app(abs3.clone(), abs4.clone()));
         let root2 = Rc::new(LNode::new_app(app3.clone(), app3.clone()));
@@ -240,22 +310,12 @@ mod tests {
         var2.bind_to(abs2.clone());
         var1.bind_to(abs1.clone());
 
-        let g = LGraph::from(vec![
-            root1.clone(),
-            app1.clone(),
-            abs1.clone(),
-            var1.clone(),
-            app2.clone(),
-            abs2.clone(),
-            var2.clone(),
-            root2.clone(),
-            app3.clone(),
-            abs3.clone(),
-            var3.clone(),
-        ]);
+        // let g = LGraph::from_roots(root1.clone(), root2.clone());
+
+        let g = LGraph::from_roots(root1.clone(), root2.clone());
 
         // DEBUG ONLY: prints the memory cell for each node
-        g.nodes.iter().for_each(|n| println!("{:?}", n));
+        // g.nodes.iter().for_each(|n| println!("{:?}, {0:p}", n));
 
         let check_res = g.blind_check();
         assert!(check_res.is_ok(), "{}", check_res.err().unwrap());

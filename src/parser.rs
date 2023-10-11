@@ -1,19 +1,31 @@
 use core::panic;
-use std::{collections::HashMap, fs, hash::Hash, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 
 use dedukti_parse::{
     term::{App, AppH},
     Command, Intro, Rule, Strict, Symb,
 };
 
-use crate::{lgraph::LGraph, lnode::LNode};
+use crate::lnode::LNode;
 
-type Term<'a> = dedukti_parse::Term<Symb<&'a str>, &'a str>;
-type Result<T> = std::result::Result<T, String>;
 type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
 
-pub struct Rewrite(Rc<LNode>, Rc<LNode>);
-pub struct Context(HashMap<String, Rc<LNode>>, Vec<Rewrite>);
+#[derive(Debug, Clone)]
+pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
+#[derive(Debug, Clone)]
+pub struct Context(pub HashMap<String, Rc<LNode>>, pub Vec<Rewrite>);
+
+impl Context {
+    pub fn new() -> Self {
+        let mut gamma: HashMap<String, Rc<LNode>> = HashMap::new();
+
+        // Insert Type and Kind sorts.
+        gamma.insert("Type".to_string(), Rc::new(LNode::new_var(None)));
+        gamma.insert("Kind".to_string(), Rc::new(LNode::new_var(None)));
+
+        Context(gamma, Vec::default())
+    }
+}
 
 fn parse_rule(
     gamma: &mut HashMap<String, Rc<LNode>>,
@@ -22,11 +34,10 @@ fn parse_rule(
     // Clone gamma to have a local context.
     let mut gamma = gamma.clone();
     for v in rule.ctx {
-        if let Some(ty) = v.1 {
-            // TODO: use bound variables
-            let ty = map_to_node(&mut gamma, ty);
-            gamma.insert(v.0.to_string(), ty.unwrap());
-        }
+        let (vname, ty) = v;
+        let ty = ty.map(|ty| map_to_node(&mut gamma, ty).unwrap());
+        let node = Rc::new(LNode::new_bvar(ty.clone()));
+        gamma.insert(vname.to_string(), node);
     }
 
     let lhs = map_to_node(&mut gamma, rule.lhs).unwrap();
@@ -40,34 +51,35 @@ fn map_to_node(
     app: App<AppH<Symb<&str>, &str>>,
 ) -> Option<Rc<LNode>> {
     let head = match app.head {
-        AppH::Atom(sym) => {
-            if sym.name == "Type" {
-                Some(Rc::new(LNode::new_var(None)))
-            } else {
-                gamma.get(sym.name).map(|t| t.clone())
-            }
-        }
+        AppH::Atom(sym) => gamma.get(sym.name).map(|t| t.clone()),
         AppH::Abst(x, t, body) => {
             let body = map_to_node(gamma, body.as_ref().clone()).unwrap();
-            // bind x to t in gamma
-            let t = t.map(|x| map_to_node(gamma, x.as_ref().clone()).unwrap());
-            if let Some(t) = t {
-                gamma.insert(x.to_owned(), t);
+            let t = t.map(|x| {
+                map_to_node(gamma, x.as_ref().clone())
+                    .unwrap_or_else(|| panic!("No type inference admitted."))
+            });
+            if let Some(t) = t.clone() {
+                gamma.insert(x.to_owned(), t.clone());
             }
 
-            Some(Rc::new(LNode::new_abs(body)))
+            let x = Rc::new(LNode::new_bvar(t));
+            let abs = Rc::new(LNode::new_abs(x.clone(), body));
+            x.bind_to(abs.clone());
+
+            Some(abs)
         }
         AppH::Prod(x, a, t) => {
             let a = map_to_node(gamma, a.as_ref().clone());
+
             match x {
                 Some(x) => {
                     let mut gamma = gamma.clone();
                     // If product has name `x`, save it as a variable node with type `a`.
-                    let a = Rc::new(LNode::new_var(a));
+                    let a = Rc::new(LNode::new_bvar(a));
                     gamma.insert(x.to_string(), a.clone());
                     let t = map_to_node(&mut gamma, t.as_ref().clone()).unwrap();
 
-                    let node = Rc::new(LNode::new_app(a.clone(), t.clone()));
+                    let node = Rc::new(LNode::new_prod(a.clone(), t.clone()));
 
                     a.add_parent(node.clone());
                     t.add_parent(node.clone());
@@ -75,9 +87,10 @@ fn map_to_node(
                     Some(node)
                 }
                 None => {
-                    let a = a.unwrap();
+                    let a = Rc::new(LNode::new_bvar(a));
                     let t = map_to_node(gamma, t.as_ref().clone()).unwrap();
-                    let node = Rc::new(LNode::new_app(a.clone(), t.clone()));
+
+                    let node = Rc::new(LNode::new_prod(a.clone(), t.clone()));
 
                     a.add_parent(node.clone());
                     t.add_parent(node.clone());
@@ -91,12 +104,10 @@ fn map_to_node(
     let mut res = head;
     // Apply all the arguments to the head node (left application)
     for arg in app.args {
-        // println!("{:#?}", arg);
         let t = map_to_node(gamma, arg.clone());
         if let Some(t) = t {
             res = Some(Rc::new(LNode::new_app(res.unwrap(), t)));
         } else {
-            // TODO: if `t` is None, infer type from definition.
             panic!("Something wrong.")
         }
     }
@@ -104,12 +115,22 @@ fn map_to_node(
     res
 }
 
+pub fn print_context(c: &Context) {
+    let Context(gamma, _) = c;
+    println!("{}", "-".repeat(37));
+    println!("| {0: <10} | {1: <20} |", "Symbol", "Address");
+    println!("{}", "-".repeat(37));
+    for (key, ty) in gamma {
+        println!("| {0: <10} | {1: <20p} |", key, *ty);
+    }
+    println!("{}", "-".repeat(37));
+}
+
 pub fn parse(cmds: String) -> Context {
     let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse = parse.unwrap();
 
-    let mut gamma = HashMap::new();
-    let mut rew_rules = Vec::new();
+    let Context(mut gamma, mut rew_rules) = Context::new();
     for cmd in parse {
         match cmd {
             Command::Intro(name, _path, f) => match f {
@@ -130,6 +151,7 @@ pub fn parse(cmds: String) -> Context {
                         continue;
                     }
 
+                    // TODO: add y to rewrite rules.
                     if let Some(y) = y {
                         let t = map_to_node(&mut gamma, y);
                         let node = Rc::new(LNode::new_var(t));
@@ -185,8 +207,6 @@ mod tests {
 
         let nat = gamma.get("Nat").unwrap();
         let zero = gamma.get("zero").unwrap();
-        let s = gamma.get("S").unwrap();
-        let plus = gamma.get("plus").unwrap();
 
         assert_eq!(zero.get_type().unwrap(), *nat);
     }
