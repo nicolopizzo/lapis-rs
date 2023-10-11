@@ -5,5 +5,5 @@ zero: Nat.
 def S: Nat -> Nat.
 
 def plus: Nat -> Nat -> Nat.
-[n: Nat] plus zero n --> n.
+[n: Nat] plus zero n --> n
 [m: Nat,n : Nat] plus (S m) n --> S (plus m n).
