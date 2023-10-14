@@ -107,23 +107,18 @@ impl LGraph {
             }
             let n = n.unwrap().upgrade().unwrap();
 
-            // For every parent m of n ...
-            // TODO: se la bvar è istanziata, itero sui padri.
-            for m in n.get_parent().iter().map(|x| x.upgrade()) {
-                if let Some(m) = m {
-                    let parent = m.clone().canonic().borrow().upgrade();
-                    match parent {
-                        None => {
-                            if let Err(e) = self.build_equivalence_class(m.clone()) {
-                                return Err(e);
-                            }
-                        }
-                        Some(c1) => {
-                            if *c1.building().borrow() {
-                                return Err(String::from("Error: Parent still building"));
-                            }
-                        }
-                    }
+            // If n is a `BVar` and is instatiated, use it instead of the theoretical variable. The following
+            // snippet is equal to the used code, but `n` should be
+
+            // Check parents of n. If n is a `BVar` and is instatiated, use the substitution.
+            if n.is_bvar() && n.get_sub().is_some() {
+                let n = n.get_sub().unwrap();
+                if let Some(error) = self.check_parents(n.clone()) {
+                    return error;
+                }
+            } else {
+                if let Some(error) = self.check_parents(n.clone()) {
+                    return error;
                 }
             }
 
@@ -154,6 +149,27 @@ impl LGraph {
         c.set_building(false);
 
         Ok(())
+    }
+
+    fn check_parents(&self, n: Rc<LNode>) -> Option<Result<(), String>> {
+        for m in n.get_parent().iter().map(|x| x.upgrade()) {
+            if let Some(m) = m {
+                let parent = m.clone().canonic().borrow().upgrade();
+                match parent {
+                    None => {
+                        if let Err(e) = self.build_equivalence_class(m.clone()) {
+                            return Some(Err(e));
+                        }
+                    }
+                    Some(c1) => {
+                        if *c1.building().borrow() {
+                            return Some(Err(String::from("Error: Parent still building")));
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn enqueue_and_propagate(&self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
