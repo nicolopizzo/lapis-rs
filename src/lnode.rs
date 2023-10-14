@@ -2,7 +2,8 @@ use std::{
     cell::RefCell,
     collections::VecDeque,
     fmt::Debug,
-    rc::{Rc, Weak}, hash::Hash,
+    hash::Hash,
+    rc::{Rc, Weak},
 };
 
 use LNode::*;
@@ -76,29 +77,28 @@ impl PartialEq for LNode {
 impl Debug for LNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Abs { body, .. } => f
-                .debug_struct("Abs")
-                .field("body", body)
-                // .field("t", t)
-                .finish(),
+            Abs { body, .. } => f.debug_struct("Abs").field("body", body).finish(),
             App { left, right, .. } => f
                 .debug_struct("App")
                 .field("left", left)
                 .field("right", right)
-                // .field("t", t)
                 .finish(),
-            Prod { bvar: left, body: right, .. } => f
+            Prod { bvar, body, .. } => f
                 .debug_struct("Prod")
-                .field("left", left)
-                .field("right", right)
-                // .field("t", t)
+                .field("bvar", bvar)
+                .field("body", body)
                 .finish(),
-            BVar { ty: t, .. } => f
-                .debug_struct("BVar")
-                // .field("binder", binder)
-                .field("t", t)
-                .finish(),
-            Var { ty: t, .. } => f.debug_struct("Var").field("t", t).finish(),
+            BVar { ty, .. } => {
+                let subs = self.get_sub();
+                if subs.is_some() {
+                    let subs = subs.unwrap();
+                    f.debug_struct("Sub").finish()?;
+                    subs.fmt(f)
+                } else {
+                    f.debug_struct("BVar").field("t", ty).finish()
+                }
+            }
+            Var { ty, .. } => f.debug_struct("Var").field("ty", ty).finish(),
         }
     }
 }
@@ -109,9 +109,7 @@ impl Hash for LNode {
     }
 }
 
-impl Eq for LNode {
-    
-}
+impl Eq for LNode {}
 
 #[allow(dead_code)]
 impl LNode {
