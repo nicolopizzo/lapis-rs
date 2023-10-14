@@ -20,8 +20,11 @@ impl Context {
         let mut gamma: HashMap<String, Rc<LNode>> = HashMap::new();
 
         // Insert Type and Kind sorts.
-        gamma.insert("Type".to_string(), Rc::new(LNode::new_var(None)));
-        gamma.insert("Kind".to_string(), Rc::new(LNode::new_var(None)));
+        let kind = Rc::new(LNode::new_var(None));
+        gamma.insert("Kind".to_string(), kind.clone());
+
+        //  Γ |- Type : Kind
+        gamma.insert("Type".to_string(), Rc::new(LNode::new_var(Some(kind.clone()))));
 
         Context(gamma, Vec::default())
     }
