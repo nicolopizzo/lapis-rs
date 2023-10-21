@@ -24,7 +24,11 @@ impl Context {
         gamma.insert("Kind".to_string(), kind.clone());
 
         //  Γ |- Type : Kind
-        gamma.insert("Type".to_string(), Rc::new(LNode::new_var(Some(kind.clone()))));
+        let type_sort = Rc::new(LNode::new_var(Some(kind.clone())));
+        gamma.insert("Type".to_string(), type_sort.clone());
+
+        // FIXME: Parser doesn't recognize the wildcards
+        gamma.insert("_".to_string(), type_sort);
 
         Context(gamma, Vec::default())
     }
@@ -56,16 +60,16 @@ fn map_to_node(
     let head = match app.head {
         AppH::Atom(sym) => gamma.get(sym.name).map(|t| t.clone()),
         AppH::Abst(x, t, body) => {
-            let body = map_to_node(gamma, body.as_ref().clone()).unwrap();
-            let t = t.map(|x| {
-                map_to_node(gamma, x.as_ref().clone())
-                    .unwrap_or_else(|| panic!("No type inference admitted."))
+            let t = t.map(|t| {
+                map_to_node(gamma, t.as_ref().clone()).expect("No type inference admitted.")
             });
+
             if let Some(t) = t.clone() {
                 gamma.insert(x.to_owned(), t.clone());
             }
-
+            
             let x = Rc::new(LNode::new_bvar(t));
+            let body = map_to_node(gamma, body.as_ref().clone()).unwrap();
             let abs = Rc::new(LNode::new_abs(x.clone(), body));
             x.bind_to(abs.clone());
 
