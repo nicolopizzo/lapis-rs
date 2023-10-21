@@ -3,6 +3,7 @@ use core::panic;
 use std::{
     collections::HashMap,
     fmt::format,
+    hash::Hash,
     rc::{self, Rc},
 };
 
@@ -11,22 +12,31 @@ use crate::{lgraph::LGraph, lnode::LNode, parser::Context};
 fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> {
     match node.as_ref() {
         LNode::App { left, right, .. } => {
-            let left = deep_clone(subs, left.clone());
-            let right = deep_clone(subs, right.clone());
+            let left_new = deep_clone(subs, left.clone());
+            let right_new = deep_clone(subs, right.clone());
+            if left_new == *left && right_new == *right {
+                return node.clone();
+            }
 
-            Rc::new(LNode::new_app(left, right))
+            Rc::new(LNode::new_app(left_new, right_new))
         }
         LNode::Prod { bvar, body, .. } => {
-            let bvar = deep_clone(subs, bvar.clone());
-            let body = deep_clone(subs, body.clone());
+            let bvar_new = deep_clone(subs, bvar.clone());
+            let body_new = deep_clone(subs, body.clone());
+            if bvar_new == *bvar && bvar_new == *bvar {
+                return node.clone();
+            }
 
-            Rc::new(LNode::new_prod(bvar, body))
+            Rc::new(LNode::new_prod(bvar_new, body_new))
         }
         LNode::Abs { bvar, body, .. } => {
-            let bvar = deep_clone(subs, bvar.clone());
-            let body = deep_clone(subs, body.clone());
+            let bvar_new = deep_clone(subs, bvar.clone());
+            let body_new = deep_clone(subs, body.clone());
+            if bvar_new == *bvar && bvar_new == *bvar {
+                return node.clone();
+            }
 
-            Rc::new(LNode::new_app(bvar, body))
+            Rc::new(LNode::new_abs(bvar_new, body_new))
         }
 
         LNode::BVar { subs_to, .. } => {
@@ -61,18 +71,9 @@ fn weak_head(node: Rc<LNode>) -> Rc<LNode> {
         LNode::App { left, right, .. } => {
             // Recursively weaken the head of the application.
             let left = weak_head(left.clone());
-            let left_ty = left.get_type().expect("`left` has not a type.");
-            assert!(left_ty.is_prod(), "`left` has not `Prod` type.");
+            let left = deep_clone(&mut HashMap::new(), left);
 
-            if let LNode::Prod { bvar, body, .. } = left_ty.as_ref().clone() {
-                assert!(bvar.is_bvar(), "`left` node in `Prod` is not a `BVar`.");
-
-                // check equality between left and `right_ty`
-                // TODO: uncomment for sharing equality
-                // let bvar_ty = bvar.get_type().expect("Bvar is untyped");
-                // let right_ty = right.get_type().expect("Right must have a type.");
-                // equality_check(bvar_ty.clone(), right_ty.clone());
-
+            if let LNode::Abs { bvar, body, .. } = left.as_ref().clone() {
                 bvar.subs_to(right.clone());
                 return body.clone();
             } else {
@@ -91,6 +92,8 @@ fn equality_check(r1: Rc<LNode>, r2: Rc<LNode>) -> bool {
     } else {
         g.var_check()
     }
+
+    /* Controllo che i campi `undir`, `canonic`, etc... siano resettati? Oppure non serve? */
 }
 
 fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> {
@@ -100,11 +103,6 @@ fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> 
             let right_ty = type_check(gamma, right.clone());
 
             let left_whd = weak_head(left_ty.clone());
-
-            assert!(
-                left_whd.is_prod(),
-                "`left` is not a `Prod` node in reducing weak head normal form."
-            );
 
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
@@ -126,37 +124,25 @@ fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> 
                 panic!("Error: `left` in `App` node is not evaluated to a `Prod`.")
             }
         }
-        LNode::Abs { bvar, body, .. } => Rc::new(LNode::new_prod(bvar.clone(), body.clone())),
-        LNode::BVar { ty, .. } => {
-            // if `ty` is `None`, the node should be a sort. Return it to test it.
-            if ty.is_none() {
-                return node
-            }
-            let ty = ty.clone().expect("Variable not typed");
+        LNode::Abs { bvar, body, .. } => {
+            let bvar_ty = type_check(gamma, bvar.clone());
+            let body_ty = type_check(gamma, body.clone());
 
-            let type_sort = gamma.get("Type").expect("`Type` sort not in context.");
-            let kind_sort = gamma.get("Kind").expect("`Kind` sort not in context.");
-            let sort_ty = type_check(gamma, ty.clone());
+            let body_sort = type_check(gamma, body_ty.clone());
 
-            assert!(sort_ty == *type_sort || sort_ty == *kind_sort, "Base type is not a sort");
+            let bvar_ty = weak_head(bvar_ty);
+            let body_sort = weak_head(body_sort.clone());
 
-            ty
+            let type_sort = gamma.get("Type").expect("Type sort is not in context.");
+            let kind_sort = gamma.get("Kind").expect("Kind sort is not in context.");
+
+            assert_eq!(bvar_ty, *type_sort);
+            assert!(body_sort == *type_sort || body_sort == *kind_sort);
+
+            Rc::new(LNode::new_prod(bvar.clone(), body_ty.clone()))
         }
-        LNode::Var { ty, .. } => {
-            // if `ty` is `None`, the node should be a sort. Return it to test it.
-            if ty.is_none() {
-                return node
-            }
-
-            let ty = ty.clone().expect("Variable not typed");
-            let type_sort = gamma.get("Type").expect("`Type` sort not in context.");
-            let kind_sort = gamma.get("Kind").expect("`Kind` sort not in context.");
-            let sort_ty = type_check(gamma, ty.clone());
-
-            assert!(sort_ty == *type_sort || sort_ty == *kind_sort, "Base type is not a sort");
-
-            ty
-        }
+        LNode::BVar { ty, .. } => ty.clone().expect("Variable is not typed."),
+        LNode::Var { ty, .. } => ty.clone().expect("Variable is not typed."),
         LNode::Prod { bvar, body, .. } => {
             assert!(
                 bvar.is_bvar(),
@@ -165,13 +151,22 @@ fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> 
 
             let bvar_ty = bvar.get_type().expect("Bounded variable is untyped.");
             let type_sort = gamma.get("Type").expect("`Type` sort not in context.");
+            let kind_sort = gamma.get("Kind").expect("`Kind` sort not in context.");
 
-            // bvar_ty.get_type() must be Type
             let bvar_ty = type_check(gamma, bvar_ty.clone());
+            let bvar_ty = weak_head(bvar_ty);
             assert_eq!(bvar_ty, *type_sort);
 
             // Return sort of body (Type or Kind)
-            type_check(gamma, body.clone())
+            let t = type_check(gamma, body.clone());
+
+            // TODO: Weak head?
+            let t = weak_head(t.clone());
+
+            // test if t is Type or Kind
+            assert!(t == *type_sort || t == *kind_sort);
+
+            t
         }
     }
 }
@@ -198,6 +193,27 @@ mod tests {
             let rhs_ty = type_check(&gamma, rhs);
             println!("Rule#{}", idx);
             println!("lhs: {:p}, rhs: {:p}\n", lhs_ty, rhs_ty)
+        }
+    }
+
+    #[test]
+    fn test_all() {
+        let file_path = "examples/cic.dk";
+        let cmds = fs::read_to_string(file_path);
+        assert!(cmds.is_ok(), "Error reading file");
+        let cmds = cmds.unwrap();
+
+        let c = parse(cmds.to_string());
+        print_context(&c);
+        let Context(gamma, _) = c;
+
+        for (key, value) in &gamma {
+            // `Kind` sort is always well formed.
+            if key == "Kind" {
+                continue;
+            }
+            let ty = type_check(&gamma, value.clone());
+            println!("{key: >8} --> {ty:p}");
         }
     }
 
