@@ -1,10 +1,15 @@
 use core::panic;
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    rc::Rc, sync::Mutex,
+};
 
 use dedukti_parse::{
     term::{App, AppH},
     Command, Intro, Rule, Strict, Symb,
 };
+
 
 use crate::lnode::LNode;
 
@@ -15,24 +20,6 @@ pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 #[derive(Debug, Clone)]
 pub struct Context(pub HashMap<String, Rc<LNode>>, pub Vec<Rewrite>);
 
-impl Context {
-    pub fn new() -> Self {
-        let mut gamma: HashMap<String, Rc<LNode>> = HashMap::new();
-
-        // Insert Type and Kind sorts.
-        let kind = Rc::new(LNode::new_var(None));
-        gamma.insert("Kind".to_string(), kind.clone());
-
-        //  Γ |- Type : Kind
-        let type_sort = Rc::new(LNode::new_var(Some(kind.clone())));
-        gamma.insert("Type".to_string(), type_sort.clone());
-
-        // FIXME: Parser doesn't recognize the wildcards
-        gamma.insert("_".to_string(), type_sort);
-
-        Context(gamma, Vec::default())
-    }
-}
 
 fn parse_rule(
     gamma: &mut HashMap<String, Rc<LNode>>,
@@ -58,7 +45,13 @@ fn map_to_node(
     app: App<AppH<Symb<&str>, &str>>,
 ) -> Option<Rc<LNode>> {
     let head = match app.head {
-        AppH::Atom(sym) => gamma.get(sym.name).map(|t| t.clone()),
+        AppH::Atom(Symb { path, name }) => {
+            if name == "Type" {
+                Some(Rc::new(LNode::Type))
+            } else {
+                gamma.get(name).map(|t| t.clone())
+            }
+        }
         AppH::Abst(x, t, body) => {
             let t = t.map(|t| {
                 map_to_node(gamma, t.as_ref().clone()).expect("No type inference admitted.")
@@ -67,7 +60,7 @@ fn map_to_node(
             if let Some(t) = t.clone() {
                 gamma.insert(x.to_owned(), t.clone());
             }
-            
+
             let x = Rc::new(LNode::new_bvar(t));
             let body = map_to_node(gamma, body.as_ref().clone()).unwrap();
             let abs = Rc::new(LNode::new_abs(x.clone(), body));
@@ -111,7 +104,9 @@ fn map_to_node(
     let mut res = head;
     // Apply all the arguments to the head node (left application)
     for arg in app.args {
+        // TODO: if arg is a wildcard, skip
         let t = map_to_node(gamma, arg.clone());
+
         if let Some(t) = t {
             res = Some(Rc::new(LNode::new_app(res.unwrap(), t)));
         } else {
@@ -137,40 +132,43 @@ pub fn parse(cmds: String) -> Context {
     let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse = parse.unwrap();
 
-    let Context(mut gamma, mut rew_rules) = Context::new();
+    let mut gamma = HashMap::new();
+    let mut rew_rules = Vec::new();
+
     for cmd in parse {
         match cmd {
-            Command::Intro(name, _path, f) => match f {
-                Intro::Declaration(x) => {
-                    let t = map_to_node(&mut gamma, x);
-                    let node = Rc::new(LNode::new_var(t));
-
-                    gamma.insert(name.to_string(), node);
-                }
-                Intro::Definition(x, y) => {
-                    if let Some(x) = x {
+            Command::Intro(name, _, it) => {
+                match it {
+                    Intro::Declaration(x) => {
                         let t = map_to_node(&mut gamma, x);
                         let node = Rc::new(LNode::new_var(t));
 
                         gamma.insert(name.to_string(), node);
-
-                        // If a definition has a type, you can simply memorize its snf type (?).
-                        continue;
                     }
+                    Intro::Definition(x, y) => {
+                        if let Some(x) = x {
+                            let t = map_to_node(&mut gamma, x);
+                            let node = Rc::new(LNode::new_var(t));
 
-                    // TODO: add y to rewrite rules.
-                    if let Some(y) = y {
-                        let t = map_to_node(&mut gamma, y);
-                        let node = Rc::new(LNode::new_var(t));
+                            gamma.insert(name.to_string(), node);
 
-                        gamma.insert(name.to_string(), node);
+                            continue;
+                        }
+
+                        // TODO: add y to rewrite rules.
+                        if let Some(y) = y {
+                            let t = map_to_node(&mut gamma, y);
+                            let node = Rc::new(LNode::new_var(t));
+
+                            gamma.insert(name.to_string(), node);
+                        }
+                    }
+                    Intro::Theorem(_, _) => {
+                        // TODO: parse thm
+                        todo!()
                     }
                 }
-                Intro::Theorem(_, _) => {
-                    // TODO: parse thm
-                    todo!()
-                }
-            },
+            }
             Command::Rules(rules) => {
                 let mut rules = rules
                     .iter()
@@ -191,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_parse() {
-        let file_path = "examples/vec.dk";
+        let file_path = "examples/nat.dk";
         let cmds = fs::read_to_string(file_path);
         assert!(cmds.is_ok(), "Error reading file");
         let cmds = cmds.unwrap();
@@ -210,7 +208,9 @@ mod tests {
         assert!(cmds.is_ok(), "Error reading file");
         let cmds = cmds.unwrap();
 
-        let Context(gamma, _) = parse(cmds.to_string());
+        let c = parse(cmds.to_string());
+        print_context(&c);
+        let Context(gamma, _) = c;
 
         let nat = gamma.get("Nat").unwrap();
         let zero = gamma.get("zero").unwrap();

@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::VecDeque,
-    fmt::Debug,
+    fmt::{Debug, Write},
     hash::Hash,
     rc::{Rc, Weak},
 };
@@ -61,12 +61,18 @@ pub enum LNode {
         // ty must be a `Prod` or a `Var` node.
         ty: Option<Rc<Self>>,
     },
+    Type,
+    Kind,
 }
 
 /// Implementing runtime equality for LNode.
 impl PartialEq for LNode {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self, other)
+        match (self, other) {
+            (Type, Type) => true,
+            (Kind, Kind) => true,
+            (_, _) => std::ptr::eq(self, other),
+        }
     }
 
     fn ne(&self, other: &Self) -> bool {
@@ -99,6 +105,8 @@ impl Debug for LNode {
                 }
             }
             Var { ty, .. } => f.debug_struct("Var").field("ty", ty).finish(),
+            Type => f.write_str("Type"),
+            Kind => f.write_str("Kind"),
         }
     }
 }
@@ -122,20 +130,24 @@ impl LNode {
             Abs { parent: p, .. } => p.borrow_mut().push(parent),
             BVar { parent: p, .. } => p.borrow_mut().push(parent),
             Var { parent: p, .. } => p.borrow_mut().push(parent),
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
     pub fn new_app(left: Rc<Self>, right: Rc<Self>) -> Self {
-        App {
-            left,
-            right,
+        let app = App {
+            left: left.clone(),
+            right: right.clone(),
             // t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
-        }
+        };
+
+        app
     }
 
     pub fn new_prod(bvar: Rc<Self>, body: Rc<Self>) -> Self {
@@ -227,6 +239,8 @@ impl LNode {
             Abs { undir, .. } => undir,
             BVar { undir, .. } => undir,
             Var { undir, .. } => undir,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
@@ -237,6 +251,8 @@ impl LNode {
             Abs { canonic, .. } => canonic,
             BVar { canonic, .. } => canonic,
             Var { canonic, .. } => canonic,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
@@ -247,6 +263,8 @@ impl LNode {
             Abs { canonic, .. } => *canonic.borrow_mut() = value,
             BVar { canonic, .. } => *canonic.borrow_mut() = value,
             Var { canonic, .. } => *canonic.borrow_mut() = value,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
@@ -257,6 +275,8 @@ impl LNode {
             Abs { building, .. } => building,
             BVar { building, .. } => building,
             Var { building, .. } => building,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
@@ -267,6 +287,8 @@ impl LNode {
             Abs { building, .. } => *building.borrow_mut() = b,
             BVar { building, .. } => *building.borrow_mut() = b,
             Var { building, .. } => *building.borrow_mut() = b,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
@@ -277,6 +299,8 @@ impl LNode {
             Abs { queue, .. } => queue,
             BVar { queue, .. } => queue,
             Var { queue, .. } => queue,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         }
     }
 
@@ -288,6 +312,8 @@ impl LNode {
             Abs { parent, .. } => parent,
             BVar { parent, .. } => parent,
             Var { parent, .. } => parent,
+            Type => unreachable!(),
+            Kind => unreachable!(),
         };
 
         parent.borrow().clone()
@@ -312,6 +338,19 @@ impl LNode {
     pub fn is_prod(&self) -> bool {
         matches!(self, Self::Prod { .. })
     }
+
+    pub fn is_sort(&self) -> bool {
+        self.is_type() || self.is_kind()
+    }
+
+    pub fn is_type(&self) -> bool {
+        matches!(self, Self::Type)
+    }
+
+    pub fn is_kind(&self) -> bool {
+        matches!(self, Self::Type)
+    }
+
 
     pub fn subs_to(&self, x: Rc<Self>) {
         match self {

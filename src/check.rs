@@ -10,59 +10,57 @@ use std::{
 use crate::{lgraph::LGraph, lnode::LNode, parser::Context};
 
 fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> {
-    match node.as_ref() {
-        LNode::App { left, right, .. } => {
-            let left_new = deep_clone(subs, left.clone());
-            let right_new = deep_clone(subs, right.clone());
-            if left_new == *left && right_new == *right {
-                return node.clone();
+    let node_ptr = Rc::into_raw(node.clone()) as usize;
+
+    // Se ho già incontrato questo nodo, restituisco quello che ha preso il suo posto.
+    if let Some(x) = subs.get(&node_ptr) {
+        x.clone()
+    } else {
+        let new_node = match node.as_ref() {
+            LNode::App { left, right, .. } => {
+                let left_new = deep_clone(subs, left.clone());
+                let right_new = deep_clone(subs, right.clone());
+                if left_new == *left && right_new == *right {
+                    return node.clone();
+                }
+
+                Rc::new(LNode::new_app(left_new, right_new))
+            }
+            LNode::Prod { bvar, body, .. } => {
+                let bvar_new = deep_clone(subs, bvar.clone());
+                let body_new = deep_clone(subs, body.clone());
+                if bvar_new == *bvar && bvar_new == *bvar {
+                    return node.clone();
+                }
+
+                Rc::new(LNode::new_prod(bvar_new, body_new))
+            }
+            LNode::Abs { bvar, body, .. } => {
+                let bvar_new = deep_clone(subs, bvar.clone());
+                let body_new = deep_clone(subs, body.clone());
+                if bvar_new == *bvar && bvar_new == *bvar {
+                    return node.clone();
+                }
+
+                Rc::new(LNode::new_abs(bvar_new, body_new))
             }
 
-            Rc::new(LNode::new_app(left_new, right_new))
-        }
-        LNode::Prod { bvar, body, .. } => {
-            let bvar_new = deep_clone(subs, bvar.clone());
-            let body_new = deep_clone(subs, body.clone());
-            if bvar_new == *bvar && bvar_new == *bvar {
-                return node.clone();
-            }
-
-            Rc::new(LNode::new_prod(bvar_new, body_new))
-        }
-        LNode::Abs { bvar, body, .. } => {
-            let bvar_new = deep_clone(subs, bvar.clone());
-            let body_new = deep_clone(subs, body.clone());
-            if bvar_new == *bvar && bvar_new == *bvar {
-                return node.clone();
-            }
-
-            Rc::new(LNode::new_abs(bvar_new, body_new))
-        }
-
-        LNode::BVar { subs_to, .. } => {
-            let sub = subs_to.borrow();
-            if sub.is_some() {
-                // Se c'è una sostituzione esplicita effettuo sharing
-                node.clone()
-            } else {
-                // TODO: comment properly why the pointer is needed
-                let node_ptr = Rc::into_raw(node.clone()) as usize;
-
-                // Se ho già incontrato questa bounded variable, restituisco la variabile che ha preso il suo posto.
-                if let Some(x) = subs.get(&node_ptr) {
-                    x.clone()
+            LNode::BVar { subs_to, .. } => {
+                let sub = subs_to.borrow();
+                if sub.is_some() {
+                    // Se c'è una sostituzione esplicita effettuo sharing
+                    node.clone()
                 } else {
-                    let x = Rc::new(node.as_ref().clone());
-
-                    // Inserisco la sostituzione nella mappa.
-                    subs.insert(node_ptr, x.clone());
-
-                    x
+                    Rc::new(node.as_ref().clone())
                 }
             }
-        }
 
-        LNode::Var { .. } => node.clone(),
+            // Var, Type and Kind can be shared
+            _ => node.clone(),
+        };
+        subs.insert(node_ptr, new_node.clone());
+
+        new_node
     }
 }
 
@@ -96,17 +94,17 @@ fn equality_check(r1: Rc<LNode>, r2: Rc<LNode>) -> bool {
     /* Controllo che i campi `undir`, `canonic`, etc... siano resettati? Oppure non serve? */
 }
 
-fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> {
+fn type_check(node: Rc<LNode>) -> Rc<LNode> {
     match node.as_ref() {
         LNode::App { left, right, .. } => {
-            let left_ty = type_check(gamma, left.clone());
-            let right_ty = type_check(gamma, right.clone());
+            let left_ty = type_check(left.clone());
+            let right_ty = type_check(right.clone());
 
             let left_whd = weak_head(left_ty.clone());
 
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
-            // let right_ty = deep_clone(right_ty.clone());
+            let right_ty = deep_clone(&mut HashMap::new(), right_ty.clone());
             let left_whd = deep_clone(&mut HashMap::new(), left_whd.clone());
 
             if let LNode::Prod { bvar, body, .. } = left_whd.as_ref() {
@@ -125,19 +123,21 @@ fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> 
             }
         }
         LNode::Abs { bvar, body, .. } => {
-            let bvar_ty = type_check(gamma, bvar.clone());
-            let body_ty = type_check(gamma, body.clone());
-
-            let body_sort = type_check(gamma, body_ty.clone());
-
+            assert!(
+                bvar.is_bvar(),
+                "`bvar` in `Abs` node is not a bounded variable."
+            );
+            let bvar_ty = bvar.get_type().expect("Variable is not typed.");
+            let bvar_ty = type_check(bvar_ty.clone());
             let bvar_ty = weak_head(bvar_ty);
-            let body_sort = weak_head(body_sort.clone());
+            assert!(bvar_ty.is_type());
 
-            let type_sort = gamma.get("Type").expect("Type sort is not in context.");
-            let kind_sort = gamma.get("Kind").expect("Kind sort is not in context.");
-
-            assert_eq!(bvar_ty, *type_sort);
-            assert!(body_sort == *type_sort || body_sort == *kind_sort);
+            let body_ty = type_check(body.clone());
+            let body_ty = weak_head(body_ty);
+            
+            let body_ty_sort = type_check(body_ty.clone());
+            let body_ty_sort = weak_head(body_ty_sort);
+            assert!(body_ty_sort.is_sort());
 
             Rc::new(LNode::new_prod(bvar.clone(), body_ty.clone()))
         }
@@ -149,33 +149,26 @@ fn type_check(gamma: &HashMap<String, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode> 
                 "`bvar` in `Prod` node is not a bounded variable."
             );
 
-            let bvar_ty = bvar.get_type().expect("Bounded variable is untyped.");
-            let type_sort = gamma.get("Type").expect("`Type` sort not in context.");
-            let kind_sort = gamma.get("Kind").expect("`Kind` sort not in context.");
-
-            let bvar_ty = type_check(gamma, bvar_ty.clone());
+            let bvar_ty = bvar.get_type().expect("Variable is not typed.");
+            let bvar_ty = type_check(bvar_ty.clone());
             let bvar_ty = weak_head(bvar_ty);
-            assert_eq!(bvar_ty, *type_sort);
+            assert!(bvar_ty.is_type());
 
-            // Return sort of body (Type or Kind)
-            let t = type_check(gamma, body.clone());
+            let body_ty = type_check(body.clone());
+            let body_ty = weak_head(body_ty);
+            assert!(body_ty.is_sort());
 
-            // TODO: Weak head?
-            let t = weak_head(t.clone());
-
-            // test if t is Type or Kind
-            assert!(t == *type_sort || t == *kind_sort);
-
-            t
+            body_ty
         }
+        LNode::Type => Rc::new(LNode::Kind),
+        LNode::Kind => unreachable!("Tried to type `Kind` sort."),
     }
 }
-
 mod tests {
     use crate::parser::{parse, print_context, Rewrite};
 
     use super::*;
-    use std::{fmt::format, fs, rc::Rc};
+    use std::{fmt::format, fs, rc::Rc, collections::HashSet};
 
     #[test]
     fn test_simple() {
@@ -189,8 +182,8 @@ mod tests {
         let Context(gamma, rules) = c;
 
         for (idx, Rewrite(lhs, rhs)) in (1..).zip(rules.into_iter()) {
-            let lhs_ty = type_check(&gamma, lhs);
-            let rhs_ty = type_check(&gamma, rhs);
+            let lhs_ty = type_check(lhs);
+            let rhs_ty = type_check(rhs);
             println!("Rule#{}", idx);
             println!("lhs: {:p}, rhs: {:p}\n", lhs_ty, rhs_ty)
         }
@@ -212,7 +205,7 @@ mod tests {
             if key == "Kind" {
                 continue;
             }
-            let ty = type_check(&gamma, value.clone());
+            let ty = type_check(value.clone());
             println!("{key: >8} --> {ty:p}");
         }
     }
@@ -229,12 +222,8 @@ mod tests {
         let Context(gamma, _) = c;
 
         for (key, value) in &gamma {
-            // `Kind` sort is always well formed.
-            if key == "Kind" {
-                continue;
-            }
-            let ty = type_check(&gamma, value.clone());
-            println!("{key: >8} --> {ty:p}");
+            let ty = type_check(value.clone());
+            println!("{key: >8} --> {ty:?}");
         }
     }
 
@@ -249,8 +238,8 @@ mod tests {
         let append = gamma.get("append").unwrap();
         let Rewrite(lhs, rhs) = rules[2].clone();
 
-        let lhs_ty = type_check(&gamma, lhs);
-        let rhs_ty = type_check(&gamma, rhs);
+        let lhs_ty = type_check(lhs);
+        let rhs_ty = type_check(rhs);
         println!("{:#?}", lhs_ty);
     }
 }
