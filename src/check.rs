@@ -134,7 +134,7 @@ fn type_check(node: Rc<LNode>) -> Rc<LNode> {
 
             let body_ty = type_check(body.clone());
             let body_ty = weak_head(body_ty);
-            
+
             let body_ty_sort = type_check(body_ty.clone());
             let body_ty_sort = weak_head(body_ty_sort);
             assert!(body_ty_sort.is_sort());
@@ -168,16 +168,18 @@ mod tests {
     use crate::parser::{parse, print_context, Rewrite};
 
     use super::*;
-    use std::{fmt::format, fs, rc::Rc, collections::HashSet};
+    use std::{collections::HashSet, env, fmt::format, fs, rc::Rc};
+
+    fn setup() {
+        env::set_current_dir("examples").expect("Could not set directory");
+    }
 
     #[test]
     fn test_simple() {
-        let file_path = "examples/nat.dk";
-        let cmds = fs::read_to_string(file_path);
-        assert!(cmds.is_ok(), "Error reading file");
-        let cmds = cmds.unwrap();
+        setup();
+        let file_path = "nat.dk";
+        let c = parse(String::from(file_path));
 
-        let c = parse(cmds.to_string());
         print_context(&c);
         let Context(gamma, rules) = c;
 
@@ -191,12 +193,9 @@ mod tests {
 
     #[test]
     fn test_all() {
-        let file_path = "examples/cic.dk";
-        let cmds = fs::read_to_string(file_path);
-        assert!(cmds.is_ok(), "Error reading file");
-        let cmds = cmds.unwrap();
-
-        let c = parse(cmds.to_string());
+        setup();
+        let file_path = "cic.dk";
+        let c = parse(String::from(file_path));
         print_context(&c);
         let Context(gamma, _) = c;
 
@@ -212,34 +211,35 @@ mod tests {
 
     #[test]
     fn test_context() {
-        let file_path = "examples/nat.dk";
-        let cmds = fs::read_to_string(file_path);
-        assert!(cmds.is_ok(), "Error reading file");
-        let cmds = cmds.unwrap();
+        setup();
+        let file_path = "nat.dk";
+        let c = parse(String::from(file_path));
 
-        let c = parse(cmds.to_string());
         print_context(&c);
         let Context(gamma, _) = c;
 
-        for (key, value) in &gamma {
-            let ty = type_check(value.clone());
-            println!("{key: >8} --> {ty:?}");
-        }
+        let typ_gamma = gamma
+            .iter()
+            .map(|(key, value)| (key.clone(), type_check(value.clone())))
+            .collect();
+        print_context(&Context(typ_gamma, Vec::default()));
+        // for (key, value) in &gamma {
+        //     let ty = type_check(value.clone());
+        //     println!("{key: >10} --> {ty:p}");
+        // }
     }
 
     #[test]
     fn test_dependant() {
-        let file_path = "examples/vec.dk";
-        let cmds = fs::read_to_string(file_path);
-        assert!(cmds.is_ok(), "Error reading file");
-        let cmds = cmds.unwrap();
+        setup();
+        let file_path = "vec.dk";
+        let Context(gamma, rules) = parse(String::from(file_path));
 
-        let Context(gamma, rules) = parse(cmds.to_string());
         let append = gamma.get("append").unwrap();
-        let Rewrite(lhs, rhs) = rules[2].clone();
+        let Rewrite(lhs, rhs) = rules[3].clone();
 
         let lhs_ty = type_check(lhs);
         let rhs_ty = type_check(rhs);
-        println!("{:#?}", lhs_ty);
+        println!("{:#?}", rhs_ty);
     }
 }

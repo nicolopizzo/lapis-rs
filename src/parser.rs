@@ -2,14 +2,15 @@ use core::panic;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    rc::Rc, sync::Mutex,
+    rc::Rc,
+    sync::Mutex,
 };
 
 use dedukti_parse::{
     term::{App, AppH},
     Command, Intro, Rule, Strict, Symb,
 };
-
+use lazy_static::lazy_static;
 
 use crate::lnode::LNode;
 
@@ -20,6 +21,18 @@ pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 #[derive(Debug, Clone)]
 pub struct Context(pub HashMap<String, Rc<LNode>>, pub Vec<Rewrite>);
 
+lazy_static! {
+    static ref OPEN_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
+}
+
+/// Utility function for ternary operator.
+fn ife<T>(cond: bool, t: T, f: T) -> T {
+    if cond {
+        t
+    } else {
+        f
+    }
+}
 
 fn parse_rule(
     gamma: &mut HashMap<String, Rc<LNode>>,
@@ -44,12 +57,28 @@ fn map_to_node(
     gamma: &mut HashMap<String, Rc<LNode>>,
     app: App<AppH<Symb<&str>, &str>>,
 ) -> Option<Rc<LNode>> {
-    let head = match app.head {
+    let head = match app.head.clone() {
         AppH::Atom(Symb { path, name }) => {
+            // TODO: start new parsing if `path` has not been encountered.
+            let path_string = path.join(".");
+            if !path.is_empty() && !OPEN_FILES.lock().unwrap().contains(&path_string) {
+                let filepath = format!("{path_string}.dk");
+                let Context(gamma_new, _) = parse(filepath);
+                gamma.extend(gamma_new.into_iter().map(|(key, value)| {
+                    let key = format!("{path_string}.{key}");
+                    (key, value)
+                }));
+            }
+
             if name == "Type" {
                 Some(Rc::new(LNode::Type))
             } else {
-                gamma.get(name).map(|t| t.clone())
+                let name = ife(
+                    path.is_empty(),
+                    name.to_string(),
+                    vec![path_string, name.to_string()].join("."),
+                );
+                gamma.get(&name).map(|t| t.clone())
             }
         }
         AppH::Abst(x, t, body) => {
@@ -80,9 +109,15 @@ fn map_to_node(
                     let t = map_to_node(&mut gamma, t.as_ref().clone()).unwrap();
 
                     let node = Rc::new(LNode::new_prod(a.clone(), t.clone()));
+                    a.bind_to(node.clone());
 
-                    a.add_parent(node.clone());
-                    t.add_parent(node.clone());
+                    if !a.is_sort() {
+                        a.add_parent(node.clone());
+                    }
+
+                    if !t.is_sort() {
+                        t.add_parent(node.clone());
+                    }
 
                     Some(node)
                 }
@@ -91,9 +126,15 @@ fn map_to_node(
                     let t = map_to_node(gamma, t.as_ref().clone()).unwrap();
 
                     let node = Rc::new(LNode::new_prod(a.clone(), t.clone()));
+                    a.bind_to(node.clone());
 
-                    a.add_parent(node.clone());
-                    t.add_parent(node.clone());
+                    if !a.is_sort() {
+                        a.add_parent(node.clone());
+                    }
+
+                    if !t.is_sort() {
+                        t.add_parent(node.clone());
+                    }
 
                     Some(node)
                 }
@@ -128,7 +169,10 @@ pub fn print_context(c: &Context) {
     println!("{}", "-".repeat(37));
 }
 
-pub fn parse(cmds: String) -> Context {
+pub fn parse(filepath: String) -> Context {
+    let cmds = fs::read_to_string(&filepath);
+    let cmds = cmds.expect("File not found.");
+    
     let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse = parse.unwrap();
 
@@ -185,11 +229,16 @@ pub fn parse(cmds: String) -> Context {
 
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{env, fs, path::Path};
+
+    fn setup() {
+        env::set_current_dir("examples").expect("Could not set directory");
+    }
 
     #[test]
     fn test_parse() {
-        let file_path = "examples/nat.dk";
+        setup();
+        let file_path = "nat.dk";
         let cmds = fs::read_to_string(file_path);
         assert!(cmds.is_ok(), "Error reading file");
         let cmds = cmds.unwrap();
@@ -203,12 +252,10 @@ mod tests {
 
     #[test]
     fn test_simple() {
-        let file_path = "examples/nat.dk";
-        let cmds = fs::read_to_string(file_path);
-        assert!(cmds.is_ok(), "Error reading file");
-        let cmds = cmds.unwrap();
+        setup();
+        let file_path = "nat.dk";
 
-        let c = parse(cmds.to_string());
+        let c = parse(file_path.to_string());
         print_context(&c);
         let Context(gamma, _) = c;
 
@@ -220,12 +267,8 @@ mod tests {
 
     #[test]
     fn test_dependant() {
-        let file_path = "examples/vec.dk";
-        let cmds = fs::read_to_string(file_path);
-        assert!(cmds.is_ok(), "Error reading file");
-        let cmds = cmds.unwrap();
-
-        let Context(gamma, _) = parse(cmds.to_string());
+        setup();
+        let Context(gamma, _) = parse(String::from("vec.dk"));
         let cons = gamma.get("cons");
 
         println!("{:#?}", cons);
