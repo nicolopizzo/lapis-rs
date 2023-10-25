@@ -111,13 +111,21 @@ impl LGraph {
             // snippet is equal to the used code, but `n` should be
 
             // Check parents of n. If n is a `BVar` and is instatiated, use the substitution.
-            let mut parents = Vec::from_iter(n.get_parent().iter().map(|x| x.upgrade().expect("Upgrade should return a parent")));
+            let mut parents = Vec::from_iter(
+                n.get_parent()
+                    .iter()
+                    .map(|x| x.upgrade().expect("Upgrade should return a parent")),
+            );
             while let Some(m) = parents.pop() {
                 // TODO: se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
                 if m.is_bvar() && m.get_sub().is_some() {
                     let m_sub = m.get_sub().unwrap().clone();
-                    let mut m_parent = m_sub.get_parent().iter().map(|x| x.upgrade().expect("Upgrade should return a parent")).collect();
+                    let mut m_parent = m_sub
+                        .get_parent()
+                        .iter()
+                        .map(|x| x.upgrade().expect("Upgrade should return a parent"))
+                        .collect();
                     parents.append(&mut m_parent);
                 }
 
@@ -280,58 +288,58 @@ mod tests {
     use super::*;
     #[test]
     fn test() {
-        let var1 = Rc::new(LNode::new_bvar(None));
-        let abs1 = Rc::new(LNode::new_prod(var1.clone(), var1.clone()));
-        let app1 = Rc::new(LNode::new_app(abs1.clone(), abs1.clone()));
+        let var1 = LNode::new_bvar(None);
+        let abs1 = LNode::new_prod(var1.clone(), var1.clone());
+        let app1 = LNode::new_app(abs1.clone(), abs1.clone());
 
-        let var2 = Rc::new(LNode::new_bvar(None));
-        let abs2 = Rc::new(LNode::new_prod(var2.clone(), var2.clone()));
-        let app2 = Rc::new(LNode::new_app(abs2.clone(), abs2.clone()));
-        let root1 = Rc::new(LNode::new_app(app1.clone(), app2.clone()));
+        let var2 = LNode::new_bvar(None);
+        let abs2 = LNode::new_prod(var2.clone(), var2.clone());
+        let app2 = LNode::new_app(abs2.clone(), abs2.clone());
+        let root1 = LNode::new_app(app1.clone(), app2.clone());
 
-        let var3 = Rc::new(LNode::new_bvar(None));
-        let abs3 = Rc::new(LNode::new_prod(var3.clone(), var3.clone()));
-        let var4 = Rc::new(LNode::new_bvar(None));
-        let abs4 = Rc::new(LNode::new_prod(var4.clone(), var4.clone()));
+        let var3 = LNode::new_bvar(None);
+        let abs3 = LNode::new_prod(var3.clone(), var3.clone());
+        let var4 = LNode::new_bvar(None);
+        let abs4 = LNode::new_prod(var4.clone(), var4.clone());
 
-        let app3 = Rc::new(LNode::new_app(abs3.clone(), abs4.clone()));
-        let root2 = Rc::new(LNode::new_app(app3.clone(), app3.clone()));
-
-        root1.undir().borrow_mut().push(Rc::downgrade(&root2));
-        root2.undir().borrow_mut().push(Rc::downgrade(&root1));
-
-        // Setting up the parents.
-        var1.add_parent(abs1.clone());
-        abs1.add_parent(app1.clone());
-        app1.add_parent(root1.clone());
-        var2.add_parent(abs2.clone());
-        abs2.add_parent(app2.clone());
-        app2.add_parent(root1.clone());
-        var3.add_parent(abs3.clone());
-        abs3.add_parent(app3.clone());
-        var4.add_parent(abs4.clone());
-        abs4.add_parent(app3.clone());
-        app3.add_parent(root2.clone());
-
-        // Bound the variable nodes.
-        var4.bind_to(abs4.clone());
-        var3.bind_to(abs3.clone());
-        var2.bind_to(abs2.clone());
-        var1.bind_to(abs1.clone());
+        let app3 = LNode::new_app(abs3.clone(), abs4.clone());
+        let root2 = LNode::new_app(app3.clone(), app3.clone());
 
         // let g = LGraph::from_roots(root1.clone(), root2.clone());
 
         let g = LGraph::from_roots(root1.clone(), root2.clone());
 
         // DEBUG ONLY: prints the memory cell for each node
+        println!("var1 -> {var1:p}");
+        println!("abs1 -> {abs1:p}");
+        println!("app1 -> {app1:p}");
+
+        println!("var2 -> {var2:p}");
+        println!("abs2 -> {abs2:p}");
+        println!("app2 -> {app2:p}");
+        println!("root1 -> {root1:p}");
+
+        println!("var3 -> {var3:p}");
+        println!("abs3 -> {abs3:p}");
+        println!("var4 -> {var4:p}");
+        println!("abs4 -> {abs4:p}");
+
+        println!("app3 -> {app3:p}");
+        println!("root2 -> {root2:p}");
         // g.nodes.iter().for_each(|n| println!("{:?}, {0:p}", n));
+
+        println!("{}", g.nodes.len());
 
         let check_res = g.blind_check();
         assert!(check_res.is_ok(), "{}", check_res.err().unwrap());
         println!("\nCANONIC EDGES");
-        g.nodes
-            .iter()
-            .for_each(|n| println!("{:?} -> {:?}", n, n.canonic().borrow().upgrade()));
+        g.nodes.iter().for_each(|n| {
+            println!(
+                "{:p} -> {:p}",
+                n,
+                n.canonic().borrow().upgrade().expect("Error")
+            )
+        });
 
         assert!(g.var_check(), "The query is not a sharing equivalence.");
     }

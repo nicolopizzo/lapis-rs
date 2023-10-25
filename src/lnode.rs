@@ -135,60 +135,81 @@ impl LNode {
         }
     }
 
-    pub fn new_app(left: Rc<Self>, right: Rc<Self>) -> Self {
-        let app = App {
+    pub fn new_app(left: Rc<Self>, right: Rc<Self>) -> Rc<Self> {
+        let app = Rc::new(App {
             left: left.clone(),
             right: right.clone(),
-            // t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
-        };
+        });
+
+        if !left.is_sort() {
+            left.add_parent(app.clone());
+        }
+
+        if !right.is_sort() {
+            right.add_parent(app.clone());
+        }
 
         app
     }
 
-    pub fn new_prod(bvar: Rc<Self>, body: Rc<Self>) -> Self {
-        Prod {
-            bvar,
-            body,
-            // t,
+    pub fn new_prod(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
+        let prod = Rc::new(Prod {
+            bvar: bvar.clone(),
+            body: body.clone(),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
+        });
+
+        bvar.bind_to(prod.clone());
+
+        if !body.is_sort() {
+            body.add_parent(prod.clone());
         }
+
+        prod
     }
 
-    pub fn new_abs(bvar: Rc<Self>, body: Rc<Self>) -> Self {
-        Abs {
-            bvar,
-            body,
-            // t,
+    pub fn new_abs(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
+        let abs = Rc::new(Abs {
+            bvar: bvar.clone(),
+            body: body.clone(),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
+        });
+
+        bvar.bind_to(abs.clone());
+
+        if !body.is_sort() {
+            body.add_parent(abs.clone());
         }
+
+        abs
     }
 
-    pub fn new_var(t: Option<Rc<Self>>) -> Self {
-        Var {
+    pub fn new_var(t: Option<Rc<Self>>) -> Rc<Self> {
+        Rc::new(Var {
             ty: t,
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
-        }
+        })
     }
 
-    pub fn new_bvar(t: Option<Rc<Self>>) -> Self {
-        BVar {
+    pub fn new_bvar(t: Option<Rc<Self>>) -> Rc<Self> {
+        Rc::new(BVar {
             binder: RefCell::new(Weak::new()),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
@@ -197,7 +218,7 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
             ty: t,
-        }
+        })
     }
 
     pub(crate) fn is_abs(&self) -> bool {
@@ -350,7 +371,6 @@ impl LNode {
     pub fn is_kind(&self) -> bool {
         matches!(self, Self::Type)
     }
-
 
     pub fn subs_to(&self, x: Rc<Self>) {
         match self {

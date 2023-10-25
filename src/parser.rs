@@ -43,7 +43,7 @@ fn parse_rule(
     for v in rule.ctx {
         let (vname, ty) = v;
         let ty = ty.map(|ty| map_to_node(&mut gamma, ty).unwrap());
-        let node = Rc::new(LNode::new_bvar(ty.clone()));
+        let node = LNode::new_bvar(ty.clone());
         gamma.insert(vname.to_string(), node);
     }
 
@@ -90,10 +90,9 @@ fn map_to_node(
                 gamma.insert(x.to_owned(), t.clone());
             }
 
-            let x = Rc::new(LNode::new_bvar(t));
+            let x = LNode::new_bvar(t);
             let body = map_to_node(gamma, body.as_ref().clone()).unwrap();
-            let abs = Rc::new(LNode::new_abs(x.clone(), body));
-            x.bind_to(abs.clone());
+            let abs = LNode::new_abs(x.clone(), body);
 
             Some(abs)
         }
@@ -104,37 +103,19 @@ fn map_to_node(
                 Some(x) => {
                     let mut gamma = gamma.clone();
                     // If product has name `x`, save it as a variable node with type `a`.
-                    let a = Rc::new(LNode::new_bvar(a));
+                    let a = LNode::new_bvar(a);
                     gamma.insert(x.to_string(), a.clone());
                     let t = map_to_node(&mut gamma, t.as_ref().clone()).unwrap();
 
-                    let node = Rc::new(LNode::new_prod(a.clone(), t.clone()));
-                    a.bind_to(node.clone());
-
-                    if !a.is_sort() {
-                        a.add_parent(node.clone());
-                    }
-
-                    if !t.is_sort() {
-                        t.add_parent(node.clone());
-                    }
+                    let node = LNode::new_prod(a.clone(), t.clone());
 
                     Some(node)
                 }
                 None => {
-                    let a = Rc::new(LNode::new_bvar(a));
+                    let a = LNode::new_bvar(a);
                     let t = map_to_node(gamma, t.as_ref().clone()).unwrap();
 
-                    let node = Rc::new(LNode::new_prod(a.clone(), t.clone()));
-                    a.bind_to(node.clone());
-
-                    if !a.is_sort() {
-                        a.add_parent(node.clone());
-                    }
-
-                    if !t.is_sort() {
-                        t.add_parent(node.clone());
-                    }
+                    let node = LNode::new_prod(a.clone(), t.clone());
 
                     Some(node)
                 }
@@ -149,7 +130,7 @@ fn map_to_node(
         let t = map_to_node(gamma, arg.clone());
 
         if let Some(t) = t {
-            res = Some(Rc::new(LNode::new_app(res.unwrap(), t)));
+            res = Some(LNode::new_app(res.unwrap(), t));
         } else {
             panic!("Something wrong.")
         }
@@ -172,7 +153,7 @@ pub fn print_context(c: &Context) {
 pub fn parse(filepath: String) -> Context {
     let cmds = fs::read_to_string(&filepath);
     let cmds = cmds.expect("File not found.");
-    
+
     let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse = parse.unwrap();
 
@@ -185,14 +166,14 @@ pub fn parse(filepath: String) -> Context {
                 match it {
                     Intro::Declaration(x) => {
                         let t = map_to_node(&mut gamma, x);
-                        let node = Rc::new(LNode::new_var(t));
+                        let node = LNode::new_var(t);
 
                         gamma.insert(name.to_string(), node);
                     }
                     Intro::Definition(x, y) => {
                         if let Some(x) = x {
                             let t = map_to_node(&mut gamma, x);
-                            let node = Rc::new(LNode::new_var(t));
+                            let node = LNode::new_var(t);
 
                             gamma.insert(name.to_string(), node);
 
@@ -202,7 +183,7 @@ pub fn parse(filepath: String) -> Context {
                         // TODO: add y to rewrite rules.
                         if let Some(y) = y {
                             let t = map_to_node(&mut gamma, y);
-                            let node = Rc::new(LNode::new_var(t));
+                            let node = LNode::new_var(t);
 
                             gamma.insert(name.to_string(), node);
                         }

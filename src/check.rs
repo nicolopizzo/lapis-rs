@@ -24,7 +24,7 @@ fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode
                     return node.clone();
                 }
 
-                Rc::new(LNode::new_app(left_new, right_new))
+                LNode::new_app(left_new, right_new)
             }
             LNode::Prod { bvar, body, .. } => {
                 let bvar_new = deep_clone(subs, bvar.clone());
@@ -33,7 +33,7 @@ fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode
                     return node.clone();
                 }
 
-                Rc::new(LNode::new_prod(bvar_new, body_new))
+                LNode::new_prod(bvar_new, body_new)
             }
             LNode::Abs { bvar, body, .. } => {
                 let bvar_new = deep_clone(subs, bvar.clone());
@@ -42,7 +42,7 @@ fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode
                     return node.clone();
                 }
 
-                Rc::new(LNode::new_abs(bvar_new, body_new))
+                LNode::new_abs(bvar_new, body_new)
             }
 
             LNode::BVar { subs_to, .. } => {
@@ -139,7 +139,7 @@ fn type_check(node: Rc<LNode>) -> Rc<LNode> {
             let body_ty_sort = weak_head(body_ty_sort);
             assert!(body_ty_sort.is_sort());
 
-            Rc::new(LNode::new_prod(bvar.clone(), body_ty.clone()))
+            LNode::new_prod(bvar.clone(), body_ty.clone())
         }
         LNode::BVar { ty, .. } => ty.clone().expect("Variable is not typed."),
         LNode::Var { ty, .. } => ty.clone().expect("Variable is not typed."),
