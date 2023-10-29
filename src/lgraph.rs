@@ -25,39 +25,49 @@ impl LGraph {
         r2.undir().borrow_mut().push(Rc::downgrade(&r1));
 
         let mut nodes = HashSet::new();
-
-        Self::rec_from(&mut nodes, r1);
-        Self::rec_from(&mut nodes, r2);
+        let mut ptrs = HashSet::new();
+        Self::rec_from(&mut nodes, &mut ptrs, r1);
+        Self::rec_from(&mut nodes, &mut ptrs, r2);
 
         Self { nodes }
     }
 
-    fn rec_from(nodes: &mut HashSet<Rc<LNode>>, node: Rc<LNode>) {
-        if !nodes.contains(&node) {
+    fn rec_from(nodes: &mut HashSet<Rc<LNode>>, ptrs: &mut HashSet<usize>, node: Rc<LNode>) {
+        let ptr = Rc::into_raw(node.clone()) as usize;
+        if !ptrs.contains(&ptr) {
+            ptrs.insert(ptr);
             nodes.insert(node.clone());
         }
 
         match node.as_ref() {
             App { left, right, .. } => {
-                if !nodes.contains(left) {
+                let left_ptr = Rc::into_raw(left.clone()) as usize;
+                if !ptrs.contains(&left_ptr) {
+                    ptrs.insert(left_ptr);
                     nodes.insert(left.clone());
-                    Self::rec_from(nodes, left.clone());
+                    Self::rec_from(nodes, ptrs, left.clone());
                 }
 
-                if !nodes.contains(right) {
+                let right_ptr = Rc::into_raw(right.clone()) as usize;
+                if !ptrs.contains(&right_ptr) {
+                    ptrs.insert(right_ptr);
                     nodes.insert(right.clone());
-                    Self::rec_from(nodes, right.clone());
+                    Self::rec_from(nodes, ptrs, right.clone());
                 }
             }
             Prod { bvar, body, .. } => {
-                if !nodes.contains(bvar) {
+                let bvar_ptr = Rc::into_raw(bvar.clone()) as usize;
+                if !ptrs.contains(&bvar_ptr) {
+                    ptrs.insert(bvar_ptr);
                     nodes.insert(bvar.clone());
-                    Self::rec_from(nodes, bvar.clone());
+                    Self::rec_from(nodes, ptrs, bvar.clone());
                 }
 
-                if !nodes.contains(body) {
+                let body_ptr = Rc::into_raw(body.clone()) as usize;
+                if !ptrs.contains(&body_ptr) {
+                    ptrs.insert(body_ptr);
                     nodes.insert(body.clone());
-                    Self::rec_from(nodes, body.clone());
+                    Self::rec_from(nodes, ptrs, body.clone());
                 }
             }
             _ => (),
@@ -310,21 +320,21 @@ mod tests {
         let g = LGraph::from_roots(root1.clone(), root2.clone());
 
         // DEBUG ONLY: prints the memory cell for each node
-        println!("var1 -> {var1:p}");
-        println!("abs1 -> {abs1:p}");
-        println!("app1 -> {app1:p}");
+        println!("var1  -> {var1:p}");
+        println!("abs1  -> {abs1:p}");
+        println!("app1  -> {app1:p}");
 
-        println!("var2 -> {var2:p}");
-        println!("abs2 -> {abs2:p}");
-        println!("app2 -> {app2:p}");
+        println!("var2  -> {var2:p}");
+        println!("abs2  -> {abs2:p}");
+        println!("app2  -> {app2:p}");
         println!("root1 -> {root1:p}");
 
-        println!("var3 -> {var3:p}");
-        println!("abs3 -> {abs3:p}");
-        println!("var4 -> {var4:p}");
-        println!("abs4 -> {abs4:p}");
+        println!("var3  -> {var3:p}");
+        println!("abs3  -> {abs3:p}");
+        println!("var4  -> {var4:p}");
+        println!("abs4  -> {abs4:p}");
 
-        println!("app3 -> {app3:p}");
+        println!("app3  -> {app3:p}");
         println!("root2 -> {root2:p}");
         // g.nodes.iter().for_each(|n| println!("{:?}, {0:p}", n));
 
@@ -336,7 +346,7 @@ mod tests {
         g.nodes.iter().for_each(|n| {
             println!(
                 "{:p} -> {:p}",
-                n,
+                n.clone(),
                 n.canonic().borrow().upgrade().expect("Error")
             )
         });
