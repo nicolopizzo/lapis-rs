@@ -19,7 +19,7 @@ type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
 #[derive(Debug, Clone)]
 pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 #[derive(Debug, Clone)]
-pub struct Context(pub HashMap<String, Rc<LNode>>, pub Vec<Rewrite>);
+pub struct Context(pub HashMap<String, Option<Rc<LNode>>>, pub Vec<Rewrite>);
 
 lazy_static! {
     static ref OPEN_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
@@ -35,7 +35,7 @@ fn ife<T>(cond: bool, t: T, f: T) -> T {
 }
 
 fn parse_rule(
-    gamma: &mut HashMap<String, Rc<LNode>>,
+    gamma: &mut HashMap<String, Option<Rc<LNode>>>,
     rule: Rule<&str, App<AppH<Symb<&str>, &str>>>,
 ) -> Rewrite {
     // Clone gamma to have a local context.
@@ -44,7 +44,7 @@ fn parse_rule(
         let (vname, ty) = v;
         let ty = ty.map(|ty| map_to_node(&mut gamma, ty).unwrap());
         let node = LNode::new_bvar(ty.clone());
-        gamma.insert(vname.to_string(), node);
+        gamma.insert(vname.to_string(), Some(node));
     }
 
     let lhs = map_to_node(&mut gamma, rule.lhs).unwrap();
@@ -54,14 +54,15 @@ fn parse_rule(
 }
 
 fn map_to_node(
-    gamma: &mut HashMap<String, Rc<LNode>>,
+    gamma: &mut HashMap<String, Option<Rc<LNode>>>,
     app: App<AppH<Symb<&str>, &str>>,
 ) -> Option<Rc<LNode>> {
     let head = match app.head.clone() {
         AppH::Atom(Symb { path, name }) => {
-            // TODO: start new parsing if `path` has not been encountered.
+            // start new parsing if `path` has not been encountered.
             let path_string = path.join(".");
             if !path.is_empty() && !OPEN_FILES.lock().unwrap().contains(&path_string) {
+                OPEN_FILES.lock().unwrap().insert(path_string.clone());
                 let filepath = format!("{path_string}.dk");
                 let Context(gamma_new, _) = parse(filepath);
                 gamma.extend(gamma_new.into_iter().map(|(key, value)| {
@@ -76,9 +77,12 @@ fn map_to_node(
                 let name = ife(
                     path.is_empty(),
                     name.to_string(),
-                    vec![path_string, name.to_string()].join("."),
+                    format!("{path_string}.{}", name.to_string())
                 );
-                gamma.get(&name).map(|t| t.clone())
+                gamma
+                    .get(&name)
+                    .map(|t| t.clone())
+                    .expect("Symbol {name:?} is not in context")
             }
         }
         AppH::Abst(x, t, body) => {
@@ -86,13 +90,10 @@ fn map_to_node(
                 map_to_node(gamma, t.as_ref().clone()).expect("No type inference admitted.")
             });
 
-            if let Some(t) = t.clone() {
-                gamma.insert(x.to_owned(), t.clone());
-            }
-
-            let x = LNode::new_bvar(t);
+            let node = LNode::new_bvar(t);
+            gamma.insert(x.to_owned(), Some(node.clone()));
             let body = map_to_node(gamma, body.as_ref().clone()).unwrap();
-            let abs = LNode::new_abs(x.clone(), body);
+            let abs = LNode::new_abs(node.clone(), body);
 
             Some(abs)
         }
@@ -104,7 +105,7 @@ fn map_to_node(
                     let mut gamma = gamma.clone();
                     // If product has name `x`, save it as a variable node with type `a`.
                     let a = LNode::new_bvar(a);
-                    gamma.insert(x.to_string(), a.clone());
+                    gamma.insert(x.to_string(), Some(a.clone()));
                     let t = map_to_node(&mut gamma, t.as_ref().clone()).unwrap();
 
                     let node = LNode::new_prod(a.clone(), t.clone());
@@ -126,26 +127,29 @@ fn map_to_node(
     let mut res = head;
     // Apply all the arguments to the head node (left application)
     for arg in app.args {
-        // TODO: if arg is a wildcard, skip
-        let t = map_to_node(gamma, arg.clone());
-
-        if let Some(t) = t {
-            res = Some(LNode::new_app(res.unwrap(), t));
+        // if arg is a wildcard, apply a var on which you can infer
+        let node = if let AppH::Atom(Symb { name: "_", .. }) = arg.head {
+            LNode::new_var(None)
         } else {
-            panic!("Something wrong.")
-        }
+            map_to_node(gamma, arg.clone()).expect("Something went wrong")
+        };
+
+        res = Some(LNode::new_app(res.unwrap(), node));
     }
 
     res
 }
 
-pub fn print_context(c: &Context) {
-    let Context(gamma, _) = c;
+pub fn print_context(gamma: &HashMap<String, Option<Rc<LNode>>>) {
     println!("{}", "-".repeat(37));
     println!("| {0: <10} | {1: <20} |", "Symbol", "Address");
     println!("{}", "-".repeat(37));
     for (key, ty) in gamma {
-        println!("| {0: <10} | {1: <20p} |", key, *ty);
+        if let Some(ty) = ty {
+            println!("| {0: <10} | {1: <20p} |", key, *ty);
+        } else {
+            println!("| {0: <10} | {1: <20} |", key, "None");
+        }
     }
     println!("{}", "-".repeat(37));
 }
@@ -168,24 +172,21 @@ pub fn parse(filepath: String) -> Context {
                         let t = map_to_node(&mut gamma, x);
                         let node = LNode::new_var(t);
 
-                        gamma.insert(name.to_string(), node);
+                        gamma.insert(name.to_string(), Some(node));
                     }
                     Intro::Definition(x, y) => {
-                        if let Some(x) = x {
-                            let t = map_to_node(&mut gamma, x);
-                            let node = LNode::new_var(t);
+                        // if Some(x) = x => t = map_to_node(..), altrimenti è None (caso di
+                        // inferenza da checkare con bidirectional type_check).
+                        let ty = x.map(|x| map_to_node(&mut gamma, x).expect("Error encountered"));
+                        let node = LNode::new_var(ty);
+                        gamma.insert(name.to_string(), Some(node.clone()));
 
-                            gamma.insert(name.to_string(), node);
-
-                            continue;
-                        }
-
-                        // TODO: add y to rewrite rules.
+                        // if `def x := ...`, add y to rewrite rules.
                         if let Some(y) = y {
-                            let t = map_to_node(&mut gamma, y);
-                            let node = LNode::new_var(t);
-
-                            gamma.insert(name.to_string(), node);
+                            let mut gamma = gamma.clone();
+                            let lhs = node;
+                            let rhs = map_to_node(&mut gamma, y).unwrap();
+                            rew_rules.push(Rewrite(lhs, rhs));
                         }
                     }
                     Intro::Theorem(_, _) => {
@@ -237,13 +238,13 @@ mod tests {
         let file_path = "nat.dk";
 
         let c = parse(file_path.to_string());
-        print_context(&c);
         let Context(gamma, _) = c;
+        print_context(&gamma);
 
-        let nat = gamma.get("Nat").unwrap();
-        let zero = gamma.get("zero").unwrap();
+        let nat = gamma.get("Nat").unwrap().clone().unwrap();
+        let zero = gamma.get("zero").unwrap().clone().unwrap();
 
-        assert_eq!(zero.get_type().unwrap(), *nat);
+        assert_eq!(zero.get_type().unwrap(), nat);
     }
 
     #[test]

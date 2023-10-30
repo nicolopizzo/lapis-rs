@@ -1,4 +1,5 @@
 use std::{
+    borrow::BorrowMut,
     cell::RefCell,
     collections::VecDeque,
     fmt::{Debug, Write},
@@ -49,8 +50,7 @@ pub enum LNode {
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
         subs_to: RefCell<Option<Rc<Self>>>,
-        // ty must be a `Prod` or a `Var` node.
-        ty: Option<Rc<Self>>,
+        ty: RefCell<Option<Rc<Self>>>,
     },
     Var {
         parent: RefCell<Vec<Weak<Self>>>,
@@ -58,8 +58,7 @@ pub enum LNode {
         canonic: RefCell<Weak<Self>>,
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
-        // ty must be a `Prod` or a `Var` node.
-        ty: Option<Rc<Self>>,
+        ty: RefCell<Option<Rc<Self>>>,
     },
     Type,
     Kind,
@@ -68,11 +67,7 @@ pub enum LNode {
 /// Implementing runtime equality for LNode.
 impl PartialEq for LNode {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Type, Type) => true,
-            (Kind, Kind) => true,
-            (_, _) => std::ptr::eq(self, other),
-        }
+        std::ptr::eq(self, other)
     }
 
     fn ne(&self, other: &Self) -> bool {
@@ -199,7 +194,7 @@ impl LNode {
 
     pub fn new_var(t: Option<Rc<Self>>) -> Rc<Self> {
         Rc::new(Var {
-            ty: t,
+            ty: RefCell::new(t),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -217,7 +212,7 @@ impl LNode {
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
-            ty: t,
+            ty: RefCell::new(t),
         })
     }
 
@@ -239,9 +234,17 @@ impl LNode {
 
     pub fn get_type(&self) -> Option<Rc<Self>> {
         match self {
-            Var { ty: t, .. } => t.clone(),
-            BVar { ty: t, .. } => t.clone(),
+            Var { ty: t, .. } => t.borrow().clone(),
+            BVar { ty: t, .. } => t.borrow().clone(),
             _ => None,
+        }
+    }
+
+    pub fn infer_as(&self, ty_inf: Rc<Self>) {
+        match self {
+            Var { ty, .. } => *ty.borrow_mut() = Some(ty_inf),
+            BVar { ty, .. } => *ty.borrow_mut() = Some(ty_inf),
+            _ => unreachable!("Should not reach this"),
         }
     }
 

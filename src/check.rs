@@ -94,30 +94,90 @@ fn equality_check(r1: Rc<LNode>, r2: Rc<LNode>) -> bool {
     /* Controllo che i campi `undir`, `canonic`, etc... siano resettati? Oppure non serve? */
 }
 
-fn type_check(node: Rc<LNode>) -> Rc<LNode> {
+/// Verifies that inferring the type of `node` reduces to `typ_exp`.
+fn type_check(node: Rc<LNode>, typ_exp: Rc<LNode>) {
+    match node.as_ref().clone() {
+        LNode::Abs { bvar, body, .. } => {
+            let bvar_ty = bvar.get_type();
+            let typ_exp = weak_head(typ_exp);
+            if let LNode::Prod {
+                bvar: a,
+                body: body_ty,
+                ..
+            } = typ_exp.as_ref().clone()
+            {
+                if let Some(typ) = bvar_ty {
+                    // TODO: if `typ` is not convertible to `typ_exp`, fail.
+                } else {
+                    bvar.infer_as(a);
+                }
+
+                type_check(body, body_ty);
+            } else {
+                panic!("Error: `typ_exp` in weak head normal form is not a `LNode::Prod`");
+            }
+        }
+        LNode::Var { ty, .. } if ty.borrow().is_none() => {
+            *ty.borrow_mut() = Some(typ_exp);
+        }
+        _ => {
+            let typ_inf = type_infer(node).expect("Error: could not infer type for `lhs`.");
+            // TODO: if `typ_inf` is not convertible to `typ_exp`, fail.
+            // Add here alpha equivalence between `typ_inf` and `typ_exp`.
+            // if !equality_check(typ_inf.clone(), typ_exp.clone()) {
+            // panic!("Error in eq_check");
+            // }
+        }
+    }
+}
+
+fn check_wkhd<F>(node: Rc<LNode>, pred: F)
+where
+    F: Fn(Rc<LNode>) -> bool,
+{
+    let node = type_infer(node).unwrap();
+    let node = weak_head(node);
+    assert!(pred(node));
+}
+
+fn check_rule(lhs: Rc<LNode>, rhs: Rc<LNode>) {
+    let lhs_typ = type_infer(lhs.clone());
+    if let Some(lhs_typ) = lhs_typ {
+        type_check(rhs, lhs_typ);
+    } else {
+        let rhs_typ = type_infer(rhs.clone());
+        if let Some(rhs_typ) = rhs_typ {
+            type_check(lhs, rhs_typ);
+        } else {
+            println!(
+                "[ WARN ] Could need unification for {:?} --> {:?}",
+                lhs, rhs
+            );
+        }
+    }
+}
+
+fn type_infer(node: Rc<LNode>) -> Option<Rc<LNode>> {
     match node.as_ref() {
         LNode::App { left, right, .. } => {
-            let left_ty = type_check(left.clone());
-            let right_ty = type_check(right.clone());
+            let left_ty = type_infer(left.clone()).unwrap();
 
             let left_whd = weak_head(left_ty.clone());
 
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
-            let right_ty = deep_clone(&mut HashMap::new(), right_ty.clone());
             let left_whd = deep_clone(&mut HashMap::new(), left_whd.clone());
 
             if let LNode::Prod { bvar, body, .. } = left_whd.as_ref() {
                 assert!(bvar.is_bvar(), "`left` node in `Prod` is not a `BVar`.");
 
                 // check equality between left and `right_ty`
-                // TODO: uncomment for sharing equality
-                // let bvar_ty = bvar.get_type().expect("Bvar is untyped");
-                // equality_check(bvar_ty.clone(), right_ty.clone());
+                let bvar_ty = bvar.get_type().expect("BVar must be typed in Product");
+                type_check(right.clone(), bvar_ty);
 
                 // substitute occurrences of `bvar` in `body` with `right`
                 bvar.subs_to(right.clone());
-                return body.clone();
+                return Some(body.clone());
             } else {
                 panic!("Error: `left` in `App` node is not evaluated to a `Prod`.")
             }
@@ -127,22 +187,21 @@ fn type_check(node: Rc<LNode>) -> Rc<LNode> {
                 bvar.is_bvar(),
                 "`bvar` in `Abs` node is not a bounded variable."
             );
-            let bvar_ty = bvar.get_type().expect("Variable is not typed.");
-            let bvar_ty = type_check(bvar_ty.clone());
-            let bvar_ty = weak_head(bvar_ty);
-            assert!(bvar_ty.is_type());
 
-            let body_ty = type_check(body.clone());
-            let body_ty = weak_head(body_ty);
+            let bvar_ty = bvar.get_type();
+            if bvar_ty.is_none() {
+                return None;
+            }
+            let bvar_ty = bvar_ty.unwrap();
+            check_wkhd(bvar_ty, |node| node.is_type());
 
-            let body_ty_sort = type_check(body_ty.clone());
-            let body_ty_sort = weak_head(body_ty_sort);
-            assert!(body_ty_sort.is_sort());
+            let body_ty = type_infer(body.clone()).unwrap();
+            check_wkhd(body_ty.clone(), |node| node.is_sort());
 
-            LNode::new_prod(bvar.clone(), body_ty.clone())
+            Some(LNode::new_prod(bvar.clone(), body_ty.clone()))
         }
-        LNode::BVar { ty, .. } => ty.clone().expect("Variable is not typed."),
-        LNode::Var { ty, .. } => ty.clone().expect("Variable is not typed."),
+        LNode::BVar { .. } => node.get_type(),
+        LNode::Var { .. } => node.get_type(),
         LNode::Prod { bvar, body, .. } => {
             assert!(
                 bvar.is_bvar(),
@@ -150,96 +209,111 @@ fn type_check(node: Rc<LNode>) -> Rc<LNode> {
             );
 
             let bvar_ty = bvar.get_type().expect("Variable is not typed.");
-            let bvar_ty = type_check(bvar_ty.clone());
-            let bvar_ty = weak_head(bvar_ty);
-            assert!(bvar_ty.is_type());
+            check_wkhd(bvar_ty, |node| node.is_type());
 
-            let body_ty = type_check(body.clone());
-            let body_ty = weak_head(body_ty);
-            assert!(body_ty.is_sort());
+            let body_ty = type_infer(body.clone()).unwrap();
+            check_wkhd(body_ty.clone(), |node| node.is_sort());
 
-            body_ty
+            Some(body_ty)
         }
-        LNode::Type => Rc::new(LNode::Kind),
+        LNode::Type => Some(Rc::new(LNode::Kind)),
         LNode::Kind => unreachable!("Tried to type `Kind` sort."),
     }
 }
+
+#[cfg(test)]
 mod tests {
     use crate::parser::{parse, print_context, Rewrite};
 
     use super::*;
     use std::{collections::HashSet, env, fmt::format, fs, rc::Rc};
 
-    fn setup() {
+    fn before_each() {
         env::set_current_dir("examples").expect("Could not set directory");
+    }
+
+    fn after_each() {
+        env::set_current_dir("..").expect("Could not set dir");
     }
 
     #[test]
     fn test_simple() {
-        setup();
+        before_each();
         let file_path = "nat.dk";
         let c = parse(String::from(file_path));
 
-        print_context(&c);
         let Context(gamma, rules) = c;
+        print_context(&gamma);
 
         for (idx, Rewrite(lhs, rhs)) in (1..).zip(rules.into_iter()) {
-            let lhs_ty = type_check(lhs);
-            let rhs_ty = type_check(rhs);
-            println!("Rule#{}", idx);
-            println!("lhs: {:p}, rhs: {:p}\n", lhs_ty, rhs_ty)
+            println!("Trying to type rule#{}", idx);
+            check_rule(lhs, rhs);
         }
+
+        after_each();
+        // println!("{:?}", env::current_dir());
     }
 
     #[test]
     fn test_all() {
-        setup();
+        before_each();
         let file_path = "cic.dk";
         let c = parse(String::from(file_path));
-        print_context(&c);
-        let Context(gamma, _) = c;
+        let Context(gamma, rules) = c;
+        print_context(&gamma);
 
         for (key, value) in &gamma {
-            // `Kind` sort is always well formed.
-            if key == "Kind" {
-                continue;
+            if let Some(value) = value.clone() {
+                let ty = type_infer(value);
+                //println!("{key: >8} --> {:p}");
             }
-            let ty = type_check(value.clone());
-            println!("{key: >8} --> {ty:p}");
         }
+
+        for Rewrite(lhs, rhs) in rules {
+            check_rule(lhs, rhs);
+        }
+
+        after_each();
     }
 
     #[test]
     fn test_context() {
-        setup();
+        before_each();
         let file_path = "nat.dk";
         let c = parse(String::from(file_path));
 
-        print_context(&c);
         let Context(gamma, _) = c;
+        print_context(&gamma);
 
         let typ_gamma = gamma
             .iter()
-            .map(|(key, value)| (key.clone(), type_check(value.clone())))
+            .map(|(key, opt)| (key.clone(), opt.clone().unwrap().get_type()))
             .collect();
-        print_context(&Context(typ_gamma, Vec::default()));
-        // for (key, value) in &gamma {
-        //     let ty = type_check(value.clone());
-        //     println!("{key: >10} --> {ty:p}");
+        print_context(&typ_gamma);
+        // for (key, node) in &typ_gamma {
+        // if let Some(node) = node.clone() {
+        // let node_typ = type_infer(node);
+        // if let Some(node_typ) = node_typ {
+        // println!("{key: >10} --> {node_typ:p}");
+        // }
+        // } else {
+        // println!("{key: >10} --> None");
+        // }
         // }
     }
 
     #[test]
     fn test_dependant() {
-        setup();
+        before_each();
         let file_path = "vec.dk";
         let Context(gamma, rules) = parse(String::from(file_path));
 
         let append = gamma.get("append").unwrap();
         let Rewrite(lhs, rhs) = rules[3].clone();
 
-        let lhs_ty = type_check(lhs);
-        let rhs_ty = type_check(rhs);
-        println!("{:#?}", rhs_ty);
+        let lhs_ty = type_infer(lhs);
+        let rhs_ty = type_infer(rhs.clone());
+        dbg!(&rhs);
+        dbg!(&rhs_ty);
     }
 }
