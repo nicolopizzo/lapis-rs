@@ -15,9 +15,9 @@ cons: n:Nat -> A -> Vector n -> Vector (S n).
 
 def append: n:Nat -> Vector n -> m:Nat -> Vector m -> Vector (plus n m).
 [ n: Nat, v: Vector n ] append zero nil n v --> v
-[ n: Nat, 
-  v1: Vector n, 
-  m: Nat, 
-  e: A, 
-  v2: Vector m, 
+[ n: Nat,
+  v1: Vector n,
+  m: Nat,
+  e: A,
+  v2: Vector m,
   x: Nat ] append x (cons n e v1) m v2 --> cons (plus n m) e (append n v1 m v2).
