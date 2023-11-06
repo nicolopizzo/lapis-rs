@@ -9,6 +9,9 @@ use std::{
 
 use LNode::*;
 
+#[derive(Clone)]
+pub struct NormalForms(pub bool, pub Option<Rc<LNode>>);
+
 /// Enum representing a lambda node. Such node can have three forms:
 /// - Application: an application node has two children.
 /// - Abstraction: an abstraction node has one child.
@@ -51,6 +54,7 @@ pub enum LNode {
         queue: RefCell<VecDeque<Weak<Self>>>,
         subs_to: RefCell<Option<Rc<Self>>>,
         ty: RefCell<Option<Rc<Self>>>,
+        normal_forms: RefCell<Option<NormalForms>>,
     },
     Var {
         parent: RefCell<Vec<Weak<Self>>>,
@@ -59,6 +63,7 @@ pub enum LNode {
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
         ty: RefCell<Option<Rc<Self>>>,
+        normal_forms: RefCell<Option<NormalForms>>,
     },
     Type,
     Kind,
@@ -99,7 +104,7 @@ impl Debug for LNode {
                     f.debug_struct("BVar").field("t", ty).finish()
                 }
             }
-            Var { ty, .. } => f.debug_struct("Var").field("ty", ty).finish(),
+            Var { .. } => f.write_str(format!("Var {{ {:p} }}", self).as_str()),
             Type => f.write_str("Type"),
             Kind => f.write_str("Kind"),
         }
@@ -200,6 +205,7 @@ impl LNode {
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
+            normal_forms: RefCell::new(None),
         })
     }
 
@@ -213,6 +219,7 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
             ty: RefCell::new(t),
+            normal_forms: RefCell::new(None),
         })
     }
 
@@ -372,7 +379,15 @@ impl LNode {
     }
 
     pub fn is_kind(&self) -> bool {
-        matches!(self, Self::Type)
+        matches!(self, Self::Kind)
+    }
+
+    pub fn normal_forms(&self) -> Option<NormalForms> {
+        match self {
+            Var { normal_forms, .. } => normal_forms.borrow().clone(),
+            BVar { normal_forms, .. } => normal_forms.borrow().clone(),
+            _ => unreachable!("Tried to get normal forms for node other than Variable"),
+        }
     }
 
     pub fn subs_to(&self, x: Rc<Self>) {

@@ -26,8 +26,8 @@ def 19 := S 18.
 def 20 := S 19.
 
 def plus: Nat -> Nat -> Nat.
-[n: Nat] plus zero n --> n
-[m: Nat,n : Nat] plus (S m) n --> S (plus m n).
+[ n ] plus zero n --> n
+[ m, n] plus (S m) n --> S (plus m n).
 
 def K : Nat -> Nat := x => (S (S zero)).
 def K2 := x : Nat => S ( S zero ).

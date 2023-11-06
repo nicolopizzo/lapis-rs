@@ -124,9 +124,9 @@ impl LGraph {
             let mut parents = Vec::from_iter(
                 n.get_parent()
                     .iter()
-                    .map(|x| x.upgrade().expect("Upgrade should return a parent")),
+                    .map(|x| x.upgrade()),
             );
-            while let Some(m) = parents.pop() {
+            while let Some(Some(m)) = parents.pop() {
                 // TODO: se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
                 if m.is_bvar() && m.get_sub().is_some() {
@@ -134,7 +134,7 @@ impl LGraph {
                     let mut m_parent = m_sub
                         .get_parent()
                         .iter()
-                        .map(|x| x.upgrade().expect("Upgrade should return a parent"))
+                        .map(|x| x.upgrade())
                         .collect();
                     parents.append(&mut m_parent);
                 }
