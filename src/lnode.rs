@@ -55,8 +55,10 @@ pub enum LNode {
         subs_to: RefCell<Option<Rc<Self>>>,
         ty: RefCell<Option<Rc<Self>>>,
         normal_forms: RefCell<Option<NormalForms>>,
+        is_meta: bool,
     },
     Var {
+        is_meta: bool,
         parent: RefCell<Vec<Weak<Self>>>,
         undir: RefCell<Vec<Weak<Self>>>,
         canonic: RefCell<Weak<Self>>,
@@ -83,7 +85,11 @@ impl PartialEq for LNode {
 impl Debug for LNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Abs { body, .. } => f.debug_struct("Abs").field("body", body).finish(),
+            Abs { bvar, body, .. } => f
+                .debug_struct("Abs")
+                .field("bvar", bvar)
+                .field("body", body)
+                .finish(),
             App { left, right, .. } => f
                 .debug_struct("App")
                 .field("left", left)
@@ -105,6 +111,7 @@ impl Debug for LNode {
                 }
             }
             Var { .. } => f.write_str(format!("Var {{ {:p} }}", self).as_str()),
+            // Var { ty, .. } => f.debug_struct("Var").field("ty", ty).finish(),
             Type => f.write_str("Type"),
             Kind => f.write_str("Kind"),
         }
@@ -199,6 +206,7 @@ impl LNode {
 
     pub fn new_var(t: Option<Rc<Self>>) -> Rc<Self> {
         Rc::new(Var {
+            is_meta: false,
             ty: RefCell::new(t),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
@@ -209,8 +217,24 @@ impl LNode {
         })
     }
 
+    pub fn new_meta_var(t: Option<Rc<Self>>) -> Rc<Self> {
+        Rc::new(BVar {
+            is_meta: true,
+            binder: RefCell::new(Weak::new()),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+            subs_to: RefCell::new(None),
+            ty: RefCell::new(t),
+            normal_forms: RefCell::new(None),
+        })
+    }
+
     pub fn new_bvar(t: Option<Rc<Self>>) -> Rc<Self> {
         Rc::new(BVar {
+            is_meta: false,
             binder: RefCell::new(Weak::new()),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),

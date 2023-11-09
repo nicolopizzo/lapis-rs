@@ -8,3 +8,9 @@ edition = "2021"
 [dependencies]
 dedukti-parse="0.3.1"
 lazy_static = "1.4.0"
+log = "0.4.20"
+test-log = "0.2.13"
+
+[dev-dependencies]
+env_logger = "0.10.0"
+log4rs = "1.2.0"

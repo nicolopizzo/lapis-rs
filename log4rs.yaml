@@ -1,0 +1,23 @@
+appenders:
+  stdout:
+    kind: console
+    encoder:
+      pattern: "{m}\n"
+  testing:
+    kind: file
+    path: "log/output.log"
+    encoder:
+      # pattern: "{m}\n"
+      pattern: "| {f:>15}:{L:<4} | {l:>5} | {t:<15} | {m}\n"
+    append: false
+
+root:
+  level: trace
+  appenders:
+    - testing
+
+loggers:
+  CONTEXT:
+    level: info
+    appenders:
+      - stdout

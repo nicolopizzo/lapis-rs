@@ -12,6 +12,7 @@ use dedukti_parse::{
     Command, Intro, Rule, Strict, Symb,
 };
 use lazy_static::lazy_static;
+use log::info;
 
 use crate::lnode::LNode;
 
@@ -20,44 +21,52 @@ type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
 #[derive(Debug, Clone)]
 pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 #[derive(Debug, Clone)]
-pub struct Context(pub HashMap<String, Option<Rc<LNode>>>, pub Vec<Rewrite>);
+pub struct Context(
+    pub HashMap<String, Option<Rc<LNode>>>,
+    pub HashMap<usize, Vec<Rewrite>>,
+);
 
 lazy_static! {
     static ref OPEN_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 }
 
+fn get_head(term: Rc<LNode>) -> Rc<LNode> {
+    match &*term {
+        LNode::App { left, .. } => get_head(left.clone()),
+        _ => term,
+    }
+}
+
 fn parse_rule(
     mod_name: String,
     gamma: &mut HashMap<String, Option<Rc<LNode>>>,
-    rew_rules: &mut Vec<Rewrite>,
+    rew_rules: &mut HashMap<usize, Vec<Rewrite>>,
     rule: Rule<&str, App<AppH<Symb<&str>, &str>>>,
 ) -> Rewrite {
     // Clone gamma to have a local context.
-    let mut gamma_loc = gamma.clone();
     for v in rule.ctx.clone() {
         let (vname, ty) = v;
-        let ty = ty.map(|ty| map_to_node(mod_name.clone(), &mut gamma_loc, rew_rules, ty).unwrap());
+        let ty = ty.map(|ty| map_to_node(mod_name.clone(), gamma, rew_rules, ty).unwrap());
         let node = LNode::new_bvar(ty.clone());
         let name = format!("{mod_name}.{vname}");
-        gamma_loc.insert(name, Some(node));
+        gamma.insert(name, Some(node));
     }
 
-    let lhs = map_to_node(mod_name.clone(), &mut gamma_loc, rew_rules, rule.lhs).unwrap();
-    let rhs = map_to_node(mod_name.clone(), &mut gamma_loc, rew_rules, rule.rhs).unwrap();
+    let lhs = map_to_node(mod_name.clone(), gamma, rew_rules, rule.lhs).unwrap();
+    let rhs = map_to_node(mod_name.clone(), gamma, rew_rules, rule.rhs).unwrap();
 
     rule.ctx.into_iter().for_each(|(vname, _)| {
         let name = format!("{mod_name}.{vname}");
-        gamma_loc.remove(&name);
+        gamma.remove(&name);
     });
 
-    gamma.extend(gamma_loc);
     Rewrite(lhs, rhs)
 }
 
 fn map_to_node(
     mod_name: String,
     gamma: &mut HashMap<String, Option<Rc<LNode>>>,
-    rew_rules: &mut Vec<Rewrite>,
+    rew_rules: &mut HashMap<usize, Vec<Rewrite>>,
     app: App<AppH<Symb<&str>, &str>>,
 ) -> Option<Rc<LNode>> {
     let head = match app.head.clone() {
@@ -93,14 +102,10 @@ fn map_to_node(
             let node = LNode::new_bvar(t);
             let name = format!("{mod_name}.{x}");
 
-            let mut gamma_loc = gamma.clone();
-            gamma_loc.insert(name.clone(), Some(node.clone()));
+            gamma.insert(name.clone(), Some(node.clone()));
             let body =
-                map_to_node(mod_name.clone(), &mut gamma_loc, rew_rules, body.as_ref().clone()).unwrap();
+                map_to_node(mod_name.clone(), gamma, rew_rules, body.as_ref().clone()).unwrap();
             let abs = LNode::new_abs(node.clone(), body);
-            gamma_loc.remove(&name);
-
-            gamma.extend(gamma_loc);
 
             Some(abs)
         }
@@ -109,18 +114,13 @@ fn map_to_node(
 
             match x {
                 Some(x) => {
-                    // FIXME: Stesso bug per il parsing.
-                    let mut gamma_loc = gamma.clone();
-                    // If product has name `x`, save it as a variable node with type `a`.
                     let a = LNode::new_bvar(a);
                     let name = format!("{mod_name}.{x}");
-                    gamma_loc.insert(name.clone(), Some(a.clone()));
-                    let t = map_to_node(mod_name.clone(), &mut gamma_loc, rew_rules, t.as_ref().clone())
+                    gamma.insert(name.clone(), Some(a.clone()));
+                    let t = map_to_node(mod_name.clone(), gamma, rew_rules, t.as_ref().clone())
                         .unwrap();
 
                     let node = LNode::new_prod(a.clone(), t.clone());
-                    gamma_loc.remove(&name);
-                    gamma.extend(gamma_loc);
 
                     Some(node)
                 }
@@ -155,17 +155,17 @@ fn map_to_node(
 }
 
 pub fn print_context(gamma: &HashMap<String, Option<Rc<LNode>>>) {
-    println!("{}", "-".repeat(57));
-    println!("| {0: <30} | {1: <20} |", "Symbol", "Address");
-    println!("{}", "-".repeat(57));
+    info!(target: "CONTEXT", "{}", "-".repeat(57));
+    info!(target: "CONTEXT", "| {0: <30} | {1: <20} |", "Symbol", "Address");
+    info!(target: "CONTEXT", "{}", "-".repeat(57));
     for (key, ty) in gamma {
         if let Some(ty) = ty {
-            println!("| {0: <30} | {1: <20p} |", key, *ty);
+            info!(target: "CONTEXT", "| {0: <30} | {1: <20p} |", key, *ty);
         } else {
-            println!("| {0: <30} | {1: <20} |", key, "None");
+            info!(target: "CONTEXT", "| {0: <30} | {1: <20} |", key, "None");
         }
     }
-    println!("{}", "-".repeat(57));
+    info!(target: "CONTEXT", "{}", "-".repeat(57));
 }
 
 pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -> Context {
@@ -176,7 +176,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
     let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse = parse.unwrap();
 
-    let mut rew_rules = Vec::new();
+    let mut rew_rules = HashMap::new();
     let mod_name = filepath
         .strip_suffix(".dk")
         .expect("File has not `.dk` extension.")
@@ -188,8 +188,6 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
             Command::Intro(name, app_terms, it) => {
                 let name = format!("{mod_name}.{name}");
 
-                // FIXME: app terms si deve tradurre in una astrazione: thm/def VAR (x1: A1, ..., xn: An): C := ...
-                // si traduce in VAR |-> x1: A1 => ... => xn : An => C
                 for (name, node) in &app_terms {
                     let typ = map_to_node(mod_name.clone(), gamma, &mut rew_rules, node.clone());
                     let name = format!("{mod_name}.{name}");
@@ -203,8 +201,6 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                         let node = LNode::new_var(t);
 
                         node.clone()
-
-                        // gamma.insert(name.to_string(), Some(node.clone()));
                     }
                     Intro::Definition(x, y) => {
                         // if Some(x) = x => t = map_to_node(..), altrimenti è None (caso di
@@ -215,19 +211,17 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                         });
                         let node = LNode::new_var(ty);
 
-                        // println!("[ INFO ] Inserting {name:?} symbol ");
-                        // gamma.insert(name.to_string(), Some(node.clone()));
-
                         // if `def x := ...`, add y to rewrite rules.
                         if let Some(y) = y {
-                            // FIXME: Se in y ci sono delle definizioni che scaturiscono nuovi
-                            // parse, gamma non viene modificato per via del clone.
-                            // let mut gamma = gamma.clone();
                             let lhs = node.clone();
-                            // let rhs = map_to_node(mod_name.clone(), &mut gamma, y).unwrap();
                             let rhs =
                                 map_to_node(mod_name.clone(), gamma, &mut rew_rules, y).unwrap();
-                            rew_rules.push(Rewrite(lhs, rhs));
+                            rew_rules.insert(
+                                Rc::into_raw(node.clone()) as usize,
+                                vec![Rewrite(lhs, rhs)],
+                            );
+
+                            // rew_rules.push(Rewrite(lhs, rhs));
                         }
 
                         node
@@ -249,20 +243,42 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                 gamma.insert(name, Some(res));
             }
             Command::Rules(rules) => {
-                let mut rules = rules
+                let rules: Vec<_> = rules
                     .iter()
                     .map(|rule| parse_rule(mod_name.clone(), gamma, &mut rew_rules, rule.clone()))
                     .collect();
 
-                rew_rules.append(&mut rules);
+                for Rewrite(lhs, rhs) in rules {
+                    let head = get_head(lhs.clone());
+                    let head = Rc::into_raw(head) as usize;
+
+                    // If head is already in `rew_rules`, append new rule
+                    if let Some(rules) = rew_rules.get_mut(&head) {
+                        rules.push(Rewrite(lhs, rhs));
+                    } else {
+                        rew_rules.insert(head, vec![Rewrite(lhs, rhs)]);
+                    }
+                }
+
+                // rew_rules.append(&mut rules);
             }
         }
     }
 
-    Context(gamma.to_owned(), rew_rules)
+    // RIMUOVO I SIMBOLI BVAR
+    let gamma: HashMap<String, Option<_>> = gamma
+        .into_iter()
+        .filter(|(_, term)| term.is_none() || !term.as_ref().unwrap().is_bvar())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    Context(gamma, rew_rules)
 }
 
 mod tests {
+    use log::info;
+    use test_log::test;
+
     use super::*;
     use std::{env, fs, path::Path};
 
@@ -291,11 +307,15 @@ mod tests {
         let file_path = "nat.dk";
 
         let c = parse(file_path.to_string(), &mut HashMap::new());
-        let Context(gamma, _) = c;
+        let Context(gamma, rules) = c;
         print_context(&gamma);
 
         let nat = gamma.get("nat.Nat").unwrap().clone().unwrap();
         let zero = gamma.get("nat.zero").unwrap().clone().unwrap();
+        let k2 = gamma.get("nat.K2").unwrap().clone().unwrap();
+        let k2_ptr = Rc::into_raw(k2) as usize;
+        let rules = rules.get(&k2_ptr);
+        info!("{:?}", rules);
 
         assert_eq!(zero.get_type().unwrap(), nat);
     }
@@ -312,12 +332,10 @@ mod tests {
     fn test_lib() {
         setup();
         env::set_current_dir("focalide").expect("Could not set directory");
-        let filepath = String::from("zen.dk");
+        let filepath = String::from("additive_law.dk");
 
         let Context(gamma, _) = parse(filepath, &mut HashMap::new());
         print_context(&gamma);
-
-        let eqc = gamma.get("zen.equal_congruence").unwrap().clone().unwrap();
-        dbg!(eqc);
+        println!("Context has {} symbols", gamma.len());
     }
 }
