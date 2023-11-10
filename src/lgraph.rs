@@ -298,18 +298,18 @@ mod tests {
     use super::*;
     #[test]
     fn test() {
-        let var1 = LNode::new_bvar(None);
+        let var1 = LNode::new_bvar(None, Some("x"));
         let abs1 = LNode::new_prod(var1.clone(), var1.clone());
         let app1 = LNode::new_app(abs1.clone(), abs1.clone());
 
-        let var2 = LNode::new_bvar(None);
+        let var2 = LNode::new_bvar(None, Some("y"));
         let abs2 = LNode::new_prod(var2.clone(), var2.clone());
         let app2 = LNode::new_app(abs2.clone(), abs2.clone());
         let root1 = LNode::new_app(app1.clone(), app2.clone());
 
-        let var3 = LNode::new_bvar(None);
+        let var3 = LNode::new_bvar(None, Some("xx"));
         let abs3 = LNode::new_prod(var3.clone(), var3.clone());
-        let var4 = LNode::new_bvar(None);
+        let var4 = LNode::new_bvar(None, Some("yy"));
         let abs4 = LNode::new_prod(var4.clone(), var4.clone());
 
         let app3 = LNode::new_app(abs3.clone(), abs4.clone());

@@ -30,7 +30,7 @@ lazy_static! {
     static ref OPEN_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
 }
 
-fn get_head(term: Rc<LNode>) -> Rc<LNode> {
+pub fn get_head(term: Rc<LNode>) -> Rc<LNode> {
     match &*term {
         LNode::App { left, .. } => get_head(left.clone()),
         _ => term,
@@ -47,7 +47,7 @@ fn parse_rule(
     for v in rule.ctx.clone() {
         let (vname, ty) = v;
         let ty = ty.map(|ty| map_to_node(mod_name.clone(), gamma, rew_rules, ty).unwrap());
-        let node = LNode::new_bvar(ty.clone());
+        let node = LNode::new_bvar(ty.clone(), Some(vname));
         let name = format!("{mod_name}.{vname}");
         gamma.insert(name, Some(node));
     }
@@ -99,7 +99,7 @@ fn map_to_node(
                     .expect("No type inference admitted.")
             });
 
-            let node = LNode::new_bvar(t);
+            let node = LNode::new_bvar(t, Some(x));
             let name = format!("{mod_name}.{x}");
 
             gamma.insert(name.clone(), Some(node.clone()));
@@ -114,7 +114,7 @@ fn map_to_node(
 
             match x {
                 Some(x) => {
-                    let a = LNode::new_bvar(a);
+                    let a = LNode::new_bvar(a, Some(x));
                     let name = format!("{mod_name}.{x}");
                     gamma.insert(name.clone(), Some(a.clone()));
                     let t = map_to_node(mod_name.clone(), gamma, rew_rules, t.as_ref().clone())
@@ -125,11 +125,11 @@ fn map_to_node(
                     Some(node)
                 }
                 None => {
-                    let a = LNode::new_bvar(a);
+                    let a = LNode::new_bvar(a, None);
                     let t = map_to_node(mod_name.clone(), gamma, rew_rules, t.as_ref().clone())
                         .unwrap();
 
-                    let node = LNode::new_prod(a.clone(), t.clone());
+                    let node = LNode::new_prod(a, t.clone());
 
                     Some(node)
                 }
@@ -142,7 +142,7 @@ fn map_to_node(
     for arg in app.args {
         // if arg is a wildcard, apply a var on which you can infer
         let node = if let AppH::Atom(Symb { name: "_", .. }) = arg.head {
-            LNode::new_var(None)
+            LNode::new_bvar(None, Some("_"))
         } else {
             map_to_node(mod_name.clone(), gamma, rew_rules, arg.clone())
                 .expect("Something went wrong")
@@ -186,19 +186,19 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
         // dbg!(&cmd);
         match cmd.clone() {
             Command::Intro(name, app_terms, it) => {
-                let name = format!("{mod_name}.{name}");
+                let name_mod = format!("{mod_name}.{name}");
 
                 for (name, node) in &app_terms {
                     let typ = map_to_node(mod_name.clone(), gamma, &mut rew_rules, node.clone());
+                    let term = LNode::new_bvar(typ, Some(name));
                     let name = format!("{mod_name}.{name}");
-                    let term = LNode::new_bvar(typ);
                     gamma.insert(name, Some(term));
                 }
 
                 let term = match it {
                     Intro::Declaration(x) => {
                         let t = map_to_node(mod_name.clone(), gamma, &mut rew_rules, x);
-                        let node = LNode::new_var(t);
+                        let node = LNode::new_var(t, name);
 
                         node.clone()
                     }
@@ -209,7 +209,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                             map_to_node(mod_name.clone(), gamma, &mut rew_rules, x)
                                 .expect("Error encountered")
                         });
-                        let node = LNode::new_var(ty);
+                        let node = LNode::new_var(ty, name);
 
                         // if `def x := ...`, add y to rewrite rules.
                         if let Some(y) = y {
@@ -240,7 +240,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                     res = LNode::new_abs(term, res);
                 }
 
-                gamma.insert(name, Some(res));
+                gamma.insert(name_mod, Some(res));
             }
             Command::Rules(rules) => {
                 let rules: Vec<_> = rules

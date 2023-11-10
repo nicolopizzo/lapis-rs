@@ -56,6 +56,7 @@ pub enum LNode {
         ty: RefCell<Option<Rc<Self>>>,
         normal_forms: RefCell<Option<NormalForms>>,
         is_meta: bool,
+        symb: Option<String>,
     },
     Var {
         is_meta: bool,
@@ -66,6 +67,7 @@ pub enum LNode {
         queue: RefCell<VecDeque<Weak<Self>>>,
         ty: RefCell<Option<Rc<Self>>>,
         normal_forms: RefCell<Option<NormalForms>>,
+        symb: String,
     },
     Type,
     Kind,
@@ -85,32 +87,51 @@ impl PartialEq for LNode {
 impl Debug for LNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Abs { bvar, body, .. } => f
-                .debug_struct("Abs")
-                .field("bvar", bvar)
-                .field("body", body)
-                .finish(),
-            App { left, right, .. } => f
-                .debug_struct("App")
-                .field("left", left)
-                .field("right", right)
-                .finish(),
-            Prod { bvar, body, .. } => f
-                .debug_struct("Prod")
-                .field("bvar", bvar)
-                .field("body", body)
-                .finish(),
-            BVar { ty, .. } => {
-                let subs = self.get_sub();
-                if subs.is_some() {
-                    let subs = subs.unwrap();
-                    f.debug_struct("Sub").finish()?;
-                    subs.fmt(f)
+            Abs { bvar, body, .. } => {
+                bvar.fmt(f)?;
+                if let Some(typ) = bvar.get_type() {
+                    f.write_str(": ")?;
+                    typ.fmt(f)?;
+                }
+                f.write_str(" => ")?;
+                body.fmt(f)
+            }
+            App { left, right, .. } => {
+                left.fmt(f)?;
+                f.write_str(" ")?;
+                if !(right.is_bvar() || right.is_var()) {
+                    f.write_str("(")?;
+                    right.fmt(f)?;
+                    f.write_str(")")
                 } else {
-                    f.debug_struct("BVar").field("t", ty).finish()
+                    right.fmt(f)
                 }
             }
-            Var { .. } => f.write_str(format!("Var {{ {:p} }}", self).as_str()),
+            Prod { bvar, body, .. } => {
+                if let BVar { symb, .. } = &**bvar {
+                    bvar.fmt(f)?;
+                    if symb.is_some() {
+                        f.write_str(":")?;
+                    }
+                }
+                // bvar.fmt(f)?;
+                if let Some(typ) = bvar.get_type() {
+                    // f.write_str(": ")?;
+                    typ.fmt(f)?;
+                }
+                f.write_str(" -> ")?;
+                body.fmt(f)
+            }
+            BVar { subs_to, symb, .. } => {
+                if let Some(sub) = &*subs_to.borrow() {
+                    sub.fmt(f)
+                } else if let Some(symb) = symb {
+                    f.write_str(&symb)
+                } else {
+                    f.write_str("")
+                }
+            }
+            Var { symb, .. } => f.write_str(&symb),
             // Var { ty, .. } => f.debug_struct("Var").field("ty", ty).finish(),
             Type => f.write_str("Type"),
             Kind => f.write_str("Kind"),
@@ -204,8 +225,9 @@ impl LNode {
         abs
     }
 
-    pub fn new_var(t: Option<Rc<Self>>) -> Rc<Self> {
+    pub fn new_var(t: Option<Rc<Self>>, symb: &str) -> Rc<Self> {
         Rc::new(Var {
+            symb: String::from(symb),
             is_meta: false,
             ty: RefCell::new(t),
             parent: RefCell::new(Vec::new()),
@@ -217,8 +239,9 @@ impl LNode {
         })
     }
 
-    pub fn new_meta_var(t: Option<Rc<Self>>) -> Rc<Self> {
+    pub fn new_meta_var(t: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
         Rc::new(BVar {
+            symb: symb.map(|s| String::from(s)),
             is_meta: true,
             binder: RefCell::new(Weak::new()),
             parent: RefCell::new(Vec::new()),
@@ -232,8 +255,9 @@ impl LNode {
         })
     }
 
-    pub fn new_bvar(t: Option<Rc<Self>>) -> Rc<Self> {
+    pub fn new_bvar(t: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
         Rc::new(BVar {
+            symb: symb.map(|s| String::from(s)),
             is_meta: false,
             binder: RefCell::new(Weak::new()),
             parent: RefCell::new(Vec::new()),

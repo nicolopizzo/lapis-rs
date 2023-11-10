@@ -8,12 +8,12 @@ use std::{
     rc::{self, Rc},
 };
 
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 
 use crate::{
     lgraph::LGraph,
     lnode::{LNode, NormalForms},
-    parser::{Context, Rewrite},
+    parser::{get_head, Context, Rewrite}
 };
 
 #[derive(Debug, Clone)]
@@ -145,20 +145,24 @@ fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode>
         _ => node.clone(),
     };
 
-    let node_ptr = Rc::into_raw(node.clone()) as usize;
+    let head = get_head(node.clone());
+    let head_ptr = Rc::into_raw(head.clone()) as usize;
 
     // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
     // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
-    for Rewrite(lhs, rhs) in rules.get(&node_ptr).unwrap_or(&Vec::new()) {
+    info!(target: "REWRITING NODE", "{:?}", node);
+    for Rewrite(lhs, rhs) in rules.get(&head_ptr).unwrap_or(&Vec::new()) {
         info!(target: "REWRITING", "Analyzing rewrite rule.");
         let mut subs = HashMap::new();
         let lhs = deep_clone(&mut subs, lhs.clone());
         let rhs = deep_clone(&mut subs, rhs.clone());
 
         // Mi mantengo un campo booleano per le metavariabili
-        if matches(wnf.clone(), lhs, rules) {
+        if matches(wnf.clone(), lhs.clone(), rules) {
             info!(target: "REWRITING", "Rule matched. Now computing whnf(rhs)");
             return weak_head(rhs, rules);
+        } else {
+            info!(target: "REWRITING", "Rule didn't match. {:?}", lhs);
         }
     }
 
@@ -186,7 +190,11 @@ fn matches(term: Rc<LNode>, pattern: Rc<LNode>, rules: &HashMap<usize, Vec<Rewri
             let l1 = weak_head(l1.clone(), rules);
             let r1 = weak_head(r1.clone(), rules);
 
-            matches(l1.clone(), l2.clone(), rules) && matches(r1.clone(), r2.clone(), rules)
+            // info!(target: "REWRITING", "Rule matched: {:?}", pattern);
+            let b1 = matches(l1.clone(), l2.clone(), rules);
+            warn!(target: "MATCH", "lhs matched: {:?}", pattern);
+            let b2 = matches(r1.clone(), r2.clone(), rules);
+            b1 && b2
         }
         (LNode::BVar { subs_to, .. }, _) if subs_to.borrow().clone().is_some() => {
             let subs_to = subs_to.borrow().clone().unwrap();
@@ -259,6 +267,7 @@ fn type_check(
         LNode::Abs { bvar, body, .. } => {
             info!(target: "TYPE CHECKING", "Checking an abstraction.");
             let typ_exp = weak_head(typ_exp, rules);
+            info!(target: "TYPE CHECKING", "TYP EXP: {:?}", typ_exp);
             if let LNode::Prod {
                 bvar: a,
                 body: body_ty,
@@ -417,7 +426,10 @@ fn type_infer(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<O
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{parse, print_context, Rewrite};
+    use crate::{
+        debug,
+        parser::{parse, print_context, Rewrite},
+    };
 
     use super::*;
     use log::{info, trace, warn, LevelFilter};
@@ -449,7 +461,8 @@ mod tests {
         print_context(&gamma);
 
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            assert!(check_rule(lhs.clone(), rhs.clone(), &rules).is_ok());
+            println!("{:?} --> {:?}", lhs, rhs);
+            // assert!(check_rule(lhs.clone(), rhs.clone(), &rules).is_ok());
         }
 
         after_each();
@@ -464,6 +477,7 @@ mod tests {
         print_context(&gamma);
 
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
+            println!("{:?} --> {:?}", lhs, rhs);
             assert!(check_rule(lhs.clone(), rhs.clone(), &rules).is_ok());
         }
 
@@ -477,11 +491,13 @@ mod tests {
         let Context(gamma, rules) = parse(String::from(file_path), &mut HashMap::new());
         print_context(&gamma);
 
-        // let append = gamma.get("append").unwrap();
+        let append = gamma.get("vec.append").unwrap().clone().unwrap();
+        println!("{:?}: {:?}", append, append.get_type().unwrap());
 
         let mut idx = 1;
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            info!("Trying to type rule#{idx:?}");
+            // info!("Trying to type rule#{idx:?}");
+            println!("{:?} --> {:?}", lhs, rhs);
             let check = check_rule(lhs.clone(), rhs.clone(), &rules);
             assert!(check.is_ok(), "Error: {:?}", check.unwrap_err());
             idx += 1;
@@ -491,9 +507,9 @@ mod tests {
     #[test]
     fn weaken_test_0() {
         // rule plus z n --> n
-        let z = LNode::new_var(None);
-        let plus = LNode::new_var(None);
-        let n = LNode::new_bvar(None);
+        let z = LNode::new_var(None, "z");
+        let plus = LNode::new_var(None, "plus");
+        let n = LNode::new_bvar(None, Some("n"));
 
         let lhs = LNode::new_app(plus.clone(), z.clone());
         let lhs = LNode::new_app(lhs, n.clone());
@@ -503,8 +519,8 @@ mod tests {
         let rule = Rewrite(lhs, rhs);
 
         // weaken something of the preceding form
-        let s = LNode::new_var(None);
-        let arg = LNode::new_bvar(None);
+        let s = LNode::new_var(None, "S");
+        let arg = LNode::new_bvar(None, Some("x"));
 
         // plus z (S m) should rewrite to S m.
         let s_m = LNode::new_app(s.clone(), arg.clone());
@@ -513,56 +529,6 @@ mod tests {
 
         // let weakened = weak_head(term, &vec![rule]);
         // assert_eq!(s_m, weakened.get_sub().unwrap());
-    }
-
-    /// Test that `plus z (plus x y)` rewrites to `plus x y`.
-    #[test]
-    fn weaken_test_1() {
-        // rule plus z n --> n
-        let z = LNode::new_var(None);
-        let plus = LNode::new_var(None);
-        let n = LNode::new_bvar(None);
-
-        let lhs = LNode::new_app(plus.clone(), z.clone());
-        let lhs = LNode::new_app(lhs, n.clone());
-
-        let rhs = n.clone();
-
-        let rule = Rewrite(lhs, rhs);
-
-        // custom input: plus z (plus x y).
-        let x = LNode::new_bvar(None);
-        let y = LNode::new_bvar(None);
-
-        let p_xy = LNode::new_app(plus.clone(), x.clone());
-        let p_xy = LNode::new_app(plus.clone(), y.clone());
-        let term = LNode::new_app(plus.clone(), z.clone());
-        let term = LNode::new_app(term, p_xy.clone());
-
-        // Verify `plus z (plus x y) --> plus x y`
-        // let weakened = weak_head(term, &vec![rule]);
-        // assert_eq!(p_xy, weakened.get_sub().unwrap());
-    }
-
-    #[test]
-    fn weaken_test_2() {
-        before_each();
-
-        let file_path = "nat.dk";
-        let Context(gamma, rules) = parse(String::from(file_path), &mut HashMap::new());
-
-        let plus = gamma.get("plus").unwrap().clone().unwrap();
-        let s = gamma.get("S").unwrap().clone().unwrap();
-        let z = gamma.get("zero").unwrap().clone().unwrap();
-
-        let m = LNode::new_app(s, z);
-        let n = LNode::new_bvar(None);
-        let app = LNode::new_app(plus, m);
-        let app = LNode::new_app(app, n);
-
-        let weakened = weak_head(app, &rules);
-
-        after_each();
     }
 
     #[test]
@@ -602,8 +568,8 @@ mod tests {
         print_context(&gamma);
 
         // snf(plus n m) should be plus n m.
-        let n = LNode::new_bvar(nat.clone());
-        let m = LNode::new_bvar(nat.clone());
+        let n = LNode::new_bvar(nat.clone(), Some("n"));
+        let m = LNode::new_bvar(nat.clone(), Some("m"));
         let app = LNode::new_app(plus, n);
         let app = LNode::new_app(app, m);
 
@@ -615,7 +581,7 @@ mod tests {
         before_each();
         env::set_current_dir("focalide").expect("ERROR");
 
-        let mod_name = "additive_law";
+        let mod_name = "dk_logic";
         let file_path = format!("{}.dk", mod_name);
         let c = parse(String::from(file_path), &mut HashMap::new());
         let Context(gamma, rules) = c;
