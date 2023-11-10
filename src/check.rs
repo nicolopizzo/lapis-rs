@@ -123,10 +123,6 @@ fn snf(term: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
 }
 
 fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
-    // Filtro le regole che si possono applicare in base alla variante della enumerazione. Se ho
-    // una applicazione non c'è bisogno di controllare altro. Evito i numerosi match per il calcolo
-    // della weak_head di qualcosa che non si può riscrivere in un altro modo.
-
     let wnf = match &*node {
         LNode::App { left, right, .. } => {
             // Recursively weaken the head of the application.
@@ -150,12 +146,10 @@ fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode>
     };
 
     let node_ptr = Rc::into_raw(node.clone()) as usize;
-    let found_rules = rules.get(&node_ptr);
-    if found_rules.is_none() {
-        return wnf;
-    }
 
-    for Rewrite(lhs, rhs) in rules.get(&node_ptr).expect("node_ptr not found") {
+    // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
+    // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
+    for Rewrite(lhs, rhs) in rules.get(&node_ptr).unwrap_or(&Vec::new()) {
         info!(target: "REWRITING", "Analyzing rewrite rule.");
         let mut subs = HashMap::new();
         let lhs = deep_clone(&mut subs, lhs.clone());
@@ -346,6 +340,7 @@ fn type_infer(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<O
             info!(target: "TYPE INFER", "Inferring `App` node.");
             let left_ty = type_infer(left.clone(), rules)?;
             if left_ty.is_none() {
+                warn!(target: "TYPE INFER", "Something strange.");
                 return Ok(None);
             }
 
