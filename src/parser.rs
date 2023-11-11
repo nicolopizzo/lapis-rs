@@ -77,7 +77,16 @@ fn map_to_node(
                 OPEN_FILES.lock().unwrap().insert(path_string.clone());
                 let filepath = format!("{path_string}.dk");
                 let Context(_, new_rules) = parse(filepath, gamma);
-                rew_rules.extend(new_rules);
+                for (head, head_rules) in new_rules {
+                    for rule in head_rules {
+                        if let Some(rules) = rew_rules.get_mut(&head) {
+                            rules.push(rule);
+                        } else {
+                            rew_rules.insert(head, vec![rule]);
+                        }
+                    }
+                }
+                // rew_rules.extend(new_rules);
             }
 
             if name == "Type" {

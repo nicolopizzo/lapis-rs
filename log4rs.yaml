@@ -7,8 +7,8 @@ appenders:
     kind: file
     path: "log/output.log"
     encoder:
-      # pattern: "{m}\n"
-      pattern: "| {f:>15}:{L:<4} | {l:>5} | {t:<15} | {m}\n"
+      pattern: "{m}\n"
+      # pattern: "| {f:>15}:{L:<4} | {l:>5} | {t:<15} | {m}\n"
     append: false
 
 root:
@@ -19,5 +19,9 @@ root:
 loggers:
   CONTEXT:
     level: info
+    appenders:
+      - stdout
+  CONSOLE:
+    level: error
     appenders:
       - stdout

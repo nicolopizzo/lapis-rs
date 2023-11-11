@@ -5,4 +5,5 @@ mod lgraph;
 mod lnode;
 mod parser;
 mod check;
+mod utils;
 fn main() {}
