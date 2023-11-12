@@ -47,7 +47,7 @@ fn parse_rule(
     for v in rule.ctx.clone() {
         let (vname, ty) = v;
         let ty = ty.map(|ty| map_to_node(mod_name.clone(), gamma, rew_rules, ty).unwrap());
-        let node = LNode::new_bvar(ty.clone(), Some(vname));
+        let node = LNode::new_meta_var(ty.clone(), Some(vname));
         let name = format!("{mod_name}.{vname}");
         gamma.insert(name, Some(node));
     }
@@ -151,7 +151,7 @@ fn map_to_node(
     for arg in app.args {
         // if arg is a wildcard, apply a var on which you can infer
         let node = if let AppH::Atom(Symb { name: "_", .. }) = arg.head {
-            LNode::new_bvar(None, Some("_"))
+            LNode::new_meta_var(None, Some("_"))
         } else {
             map_to_node(mod_name.clone(), gamma, rew_rules, arg.clone())
                 .expect("Something went wrong")

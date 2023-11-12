@@ -99,6 +99,9 @@ impl Debug for LNode {
             App { left, right, .. } => {
                 left.fmt(f)?;
                 f.write_str(" ")?;
+                // If on the right I have a substituted bvar, I check the substitution for pretty
+                // printing (if I have something other than variables, open parentheses).
+                let right = right.get_sub().unwrap_or(right.clone());
                 if !(right.is_bvar() || right.is_var()) {
                     f.write_str("(")?;
                     right.fmt(f)?;
@@ -114,9 +117,7 @@ impl Debug for LNode {
                         f.write_str(":")?;
                     }
                 }
-                // bvar.fmt(f)?;
                 if let Some(typ) = bvar.get_type() {
-                    // f.write_str(": ")?;
                     typ.fmt(f)?;
                 }
                 f.write_str(" -> ")?;
@@ -462,7 +463,7 @@ impl LNode {
         match self {
             BVar { subs_to, .. } => subs_to.borrow().clone(),
 
-            _ => unreachable!("You can substitute only a bound variable"),
+            _ => None,
         }
     }
 }
