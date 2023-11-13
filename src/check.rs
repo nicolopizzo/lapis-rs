@@ -24,7 +24,7 @@ pub enum Error {
     TriedTypingKindSort,
     TermsNotEquivalent,
     GenericError,
-    UnificationNeeded
+    UnificationNeeded,
 }
 type Result<T> = std::result::Result<T, Error>;
 static mut OPEN_DEBUG: usize = 0;
@@ -65,13 +65,23 @@ fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: Rc<LNode>) -> Rc<LNode
                 LNode::new_abs(bvar_new, body_new)
             }
 
-            LNode::BVar { subs_to, .. } => {
+            LNode::BVar {
+                subs_to, ty, symb, ..
+            } => {
                 let sub = subs_to.borrow();
                 if sub.is_some() {
                     // Se c'è una sostituzione esplicita effettuo sharing
                     node.clone()
                 } else {
-                    Rc::new(node.as_ref().clone())
+                    // Deep cloning the Type
+                    let ty = ty.borrow().clone();
+                    let ty = ty.map(|ty| deep_clone(subs, ty));
+
+                    // FIXME: refactor correctly.
+                    let symb = symb.clone().unwrap_or("_".to_string());
+                    LNode::new_bvar(ty, Some(&symb))
+                    // let ty_cloned = deep_clone(subs, ty);
+                    // Rc::new(&*node.clone())
                 }
             }
 
@@ -148,6 +158,7 @@ fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode>
             }
         }
         LNode::BVar { subs_to, .. } if subs_to.borrow().is_some() => {
+            // Salvare wnf di bvar e snf di bvar.
             let subs = subs_to.borrow().clone().unwrap();
             debug!(weak_head(subs, rules))
         }
@@ -619,16 +630,11 @@ mod tests {
         let mut index = 0;
         let mut errors = 0;
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            let name = get_name(&gamma, lhs.clone());
-            // Test only the rules of the module
-            // if name.is_none() || !name.clone().unwrap().starts_with(mod_name) {
-                // continue;
-            // }
             let check = debug!(check_rule(lhs.clone(), rhs.clone(), &rules));
             if let Err(e) = check {
-                // if e == Error::ProductExpected {
-                    // error!(target: "CONSOLE", "{{ \n Rule did not check: {:?} --> {:?}\n}}", lhs, rhs);
-                // }
+                if e == Error::ProductExpected {
+                    error!(target: "CONSOLE", "{{ \n Rule did not check: {:?} --> {:?}\n}}", lhs, rhs);
+                }
                 error!(target: "CONSOLE", "Could not check rule: error {:?} encountered", e);
                 unsafe {
                     for n in 0..OPEN_DEBUG {
@@ -648,23 +654,42 @@ mod tests {
         let _ = env::set_current_dir("..");
         after_each();
     }
-}
 
-fn get_name(gamma: &HashMap<String, Option<Rc<LNode>>>, term: Rc<LNode>) -> Option<String> {
-    match &*term {
-        LNode::App { left, .. } => get_name(gamma, left.clone()),
-        LNode::Var { .. } => {
-            for (key, value) in gamma {
-                if let Some(value) = value {
-                    if value.clone() == term {
-                        return Some(key.clone());
-                    }
+    #[test]
+    fn test_matita() {
+        before_each();
+        env::set_current_dir("matita-light").expect("ERROR");
+
+        let mod_name = "matita_basics_types";
+        let file_path = format!("{}.dk", mod_name);
+        let c = parse(String::from(file_path), &mut HashMap::new());
+        let Context(gamma, rules) = c;
+
+        let mut index = 0;
+        let mut errors = 0;
+        for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
+            let check = debug!(check_rule(lhs.clone(), rhs.clone(), &rules));
+            if let Err(e) = check {
+                if e == Error::ProductExpected {
+                    error!(target: "CONSOLE", "{{ \n Rule did not check: {:?} --> {:?}\n}}", lhs, rhs);
                 }
-            }
+                error!(target: "CONSOLE", "Could not check rule: error {:?} encountered", e);
+                unsafe {
+                    for n in 0..OPEN_DEBUG {
+                        info!("}}");
+                    }
 
-            None
-            // gamma.into_iter().find(|(key, value)| **value == term).map(|(key, _)| key.clone())
+                    OPEN_DEBUG = 0;
+                }
+                errors += 1;
+            }
+            index += 1;
         }
-        _ => unreachable!(),
+
+        let passed = index - errors;
+        println!("{} / {} rules passed", passed, index);
+
+        let _ = env::set_current_dir("..");
+        after_each();
     }
 }
