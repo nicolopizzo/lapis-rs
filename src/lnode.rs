@@ -97,7 +97,15 @@ impl Debug for LNode {
                 body.fmt(f)
             }
             App { left, right, .. } => {
-                left.fmt(f)?;
+                // f.write_str("(")?;
+                if left.is_prod() || left.is_abs() {
+                    f.write_str("(")?;
+                    left.fmt(f)?;
+                    f.write_str(")")?;
+                } else {
+                    left.fmt(f)?;
+                }
+                // f.write_str(")")?;
                 f.write_str(" ")?;
                 // If on the right I have a substituted bvar, I check the substitution for pretty
                 // printing (if I have something other than variables, open parentheses).
