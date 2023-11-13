@@ -1,0 +1,24 @@
+
+def sameF_upto :
+      __ : cic.Term univs.Type0 matita_arithmetics_nat.nat ->
+      A : cic.Univ univs.Type0 ->
+      cic.Term univs.Type0
+        (matita_basics_relations.relation
+           (cic.prod univs.Type0 univs.Type0 matita_arithmetics_nat.nat
+              (__1 : cic.Term univs.Type0 matita_arithmetics_nat.nat => A)))
+      :=
+      k : cic.Term univs.Type0 matita_arithmetics_nat.nat =>
+      A : cic.Univ univs.Type0 =>
+      f :
+        (__ : cic.Term univs.Type0 matita_arithmetics_nat.nat ->
+         cic.Term univs.Type0 A) =>
+      g :
+        (__ : cic.Term univs.Type0 matita_arithmetics_nat.nat ->
+         cic.Term univs.Type0 A) =>
+      cic.prod univs.Type0 cic.prop matita_arithmetics_nat.nat
+        (i : cic.Term univs.Type0 matita_arithmetics_nat.nat =>
+         cic.prod cic.prop cic.prop (matita_arithmetics_nat.lt i k)
+           (__ : cic.Term cic.prop (matita_arithmetics_nat.lt i k) =>
+            matita_basics_logic.eq (cic.lift univs.Type0 univs.Type2 A) (f i)
+              (g i))).
+
