@@ -11,17 +11,35 @@ appenders:
       # pattern: "| {f:>15}:{L:<4} | {l:>5} | {t:<15} | {m}\n"
     append: false
 
-root:
-  level: trace
-  appenders:
-    - testing
+# root:
+  # level: trace
+  # appenders:
+    # - testing
+    # - stdout
 
 loggers:
-  CONTEXT:
-    level: info
-    appenders:
-      - stdout
   CONSOLE:
     level: error
     appenders:
       - stdout
+      # - testing
+  # REW_RULES:
+    # level: info
+    # appenders:
+      # - testing
+  # WHNF:
+    # level: info
+    # appenders:
+      # - testing
+  # APP_WHNF:
+    # level: info
+    # # appenders:
+      # # - testing
+  # ALL:
+    # level: info
+    # appenders:
+      # - testing
+  # FOLDING:
+    # level: info
+    # appenders:
+      # - testing

@@ -21,8 +21,13 @@ impl LGraph {
     /// of both nodes.
     pub fn from_roots(r1: Rc<LNode>, r2: Rc<LNode>) -> Self {
         // Creo un arco tra le due radici
-        r1.undir().borrow_mut().push(Rc::downgrade(&r2));
-        r2.undir().borrow_mut().push(Rc::downgrade(&r1));
+        if !r1.is_type() {
+            r1.undir().borrow_mut().push(Rc::downgrade(&r2));
+        }
+
+        if !r2.is_type() {
+            r2.undir().borrow_mut().push(Rc::downgrade(&r1));
+        }
 
         let mut nodes = HashSet::new();
         let mut ptrs = HashSet::new();
@@ -39,7 +44,7 @@ impl LGraph {
             nodes.insert(node.clone());
         }
 
-        match node.as_ref() {
+        match &*node {
             App { left, right, .. } => {
                 let left_ptr = Rc::into_raw(left.clone()) as usize;
                 if !ptrs.contains(&left_ptr) {
@@ -93,7 +98,7 @@ impl LGraph {
     /// On callback termination, it is expected that the field `undir` contains pairs `(u, v)` such that `u ~ v` where
     /// `~` is the equivalence relation described in the [paper of reference](https://arxiv.org/pdf/1907.06101.pdf)
     pub fn blind_check(&self) -> Result<(), String> {
-        for n in self.nodes.iter() {
+        for n in self.nodes.iter().filter(|n| !n.is_sort()) {
             // if canonic(n) is undefined
             if n.canonic().borrow().clone().upgrade().is_none() {
                 if let Err(e) = self.build_equivalence_class(n.clone()) {
@@ -121,21 +126,13 @@ impl LGraph {
             // snippet is equal to the used code, but `n` should be
 
             // Check parents of n. If n is a `BVar` and is instatiated, use the substitution.
-            let mut parents = Vec::from_iter(
-                n.get_parent()
-                    .iter()
-                    .map(|x| x.upgrade()),
-            );
+            let mut parents = Vec::from_iter(n.get_parent().iter().map(|x| x.upgrade()));
             while let Some(Some(m)) = parents.pop() {
                 // TODO: se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
                 if m.is_bvar() && m.get_sub().is_some() {
                     let m_sub = m.get_sub().unwrap().clone();
-                    let mut m_parent = m_sub
-                        .get_parent()
-                        .iter()
-                        .map(|x| x.upgrade())
-                        .collect();
+                    let mut m_parent = m_sub.get_parent().iter().map(|x| x.upgrade()).collect();
                     parents.append(&mut m_parent);
                 }
 
@@ -184,11 +181,16 @@ impl LGraph {
     }
 
     fn enqueue_and_propagate(&self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
-        match (m.as_ref(), c.as_ref()) {
+        match (&*m, &*c) {
             (Prod { body: b1, .. }, Prod { body: b2, .. })
             | (Abs { body: b1, .. }, Abs { body: b2, .. }) => {
-                b1.undir().borrow_mut().push(Rc::downgrade(&b2));
-                b2.undir().borrow_mut().push(Rc::downgrade(&b1));
+                if !b1.is_sort() {
+                    b1.undir().borrow_mut().push(Rc::downgrade(&b2));
+                }
+
+                if !b2.is_sort() {
+                    b2.undir().borrow_mut().push(Rc::downgrade(&b1));
+                }
             }
             (
                 App {
@@ -252,26 +254,23 @@ impl LGraph {
                 if v.is_var() || w.is_var() {
                     return false;
                 }
-                match (v.as_ref(), w.as_ref()) {
+                match (&*v, &*w) {
                     (BVar { binder: b1, .. }, BVar { binder: b2, .. }) => {
-                        let b1_canonic = b1
-                            .borrow()
-                            .upgrade()
-                            .unwrap()
-                            .canonic()
-                            .borrow()
-                            .upgrade()
-                            .unwrap();
-                        let b2_canonic = b2
-                            .borrow()
-                            .upgrade()
-                            .unwrap()
-                            .canonic()
-                            .borrow()
-                            .upgrade()
-                            .unwrap();
-                        if b1_canonic != b2_canonic {
-                            return false;
+                        let b1 = b1.borrow().clone().upgrade();
+                        let b2 = b2.borrow().clone().upgrade();
+                        match (&b1, &b2) {
+                            // If both bvars have a binder check their canonic form.
+                            (Some(b1), Some(b2)) => {
+                                let canonic_b1 = b1.canonic().borrow().clone().upgrade();
+                                let canonic_b2 = b2.canonic().borrow().clone().upgrade();
+
+                                // If the found canonic do not match, the var_check fails.
+                                if canonic_b1 != canonic_b2 {
+                                    return false;
+                                }
+                            }
+
+                            _ => (),
                         }
                     }
 
@@ -293,24 +292,22 @@ mod tests {
         rc::{Rc, Weak},
     };
 
-    use crate::parser::print_context;
-
     use super::*;
     #[test]
     fn test() {
         let var1 = LNode::new_bvar(None, Some("x"));
-        let abs1 = LNode::new_prod(var1.clone(), var1.clone());
+        let abs1 = LNode::new_abs(var1.clone(), var1.clone());
         let app1 = LNode::new_app(abs1.clone(), abs1.clone());
 
         let var2 = LNode::new_bvar(None, Some("y"));
-        let abs2 = LNode::new_prod(var2.clone(), var2.clone());
+        let abs2 = LNode::new_abs(var2.clone(), var2.clone());
         let app2 = LNode::new_app(abs2.clone(), abs2.clone());
         let root1 = LNode::new_app(app1.clone(), app2.clone());
 
         let var3 = LNode::new_bvar(None, Some("xx"));
-        let abs3 = LNode::new_prod(var3.clone(), var3.clone());
+        let abs3 = LNode::new_abs(var3.clone(), var3.clone());
         let var4 = LNode::new_bvar(None, Some("yy"));
-        let abs4 = LNode::new_prod(var4.clone(), var4.clone());
+        let abs4 = LNode::new_abs(var4.clone(), var4.clone());
 
         let app3 = LNode::new_app(abs3.clone(), abs4.clone());
         let root2 = LNode::new_app(app3.clone(), app3.clone());
@@ -345,7 +342,7 @@ mod tests {
         println!("\nCANONIC EDGES");
         g.nodes.iter().for_each(|n| {
             println!(
-                "{:p} -> {:p}",
+                "{:?} -> {:?}",
                 n.clone(),
                 n.canonic().borrow().upgrade().expect("Error")
             )

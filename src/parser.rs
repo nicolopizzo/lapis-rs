@@ -7,14 +7,14 @@ use std::{
     sync::Mutex,
 };
 
+use crate::lnode::LNode;
 use dedukti_parse::{
     term::{App, AppH},
-    Command, Intro, Rule, Strict, Symb,
+    Command, Intro, Lazy, Rule, Strict, Symb,
 };
+use indicatif::{ProgressBar, ProgressIterator, ProgressStyle};
 use lazy_static::lazy_static;
 use log::info;
-
-use crate::lnode::LNode;
 
 type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
 
@@ -22,7 +22,7 @@ type ParseResult<'a, T> = std::result::Result<Vec<T>, dedukti_parse::Error>;
 pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 #[derive(Debug, Clone)]
 pub struct Context(
-    pub HashMap<String, Option<Rc<LNode>>>,
+    pub HashMap<String, Rc<LNode>>,
     pub HashMap<usize, Vec<Rewrite>>,
 );
 
@@ -39,17 +39,21 @@ pub fn get_head(term: Rc<LNode>) -> Rc<LNode> {
 
 fn parse_rule(
     mod_name: String,
-    gamma: &mut HashMap<String, Option<Rc<LNode>>>,
+    gamma: &mut HashMap<String, Rc<LNode>>,
     rew_rules: &mut HashMap<usize, Vec<Rewrite>>,
-    rule: Rule<&str, App<AppH<Symb<&str>, &str>>>,
+    rule: Rule<String, App<AppH<Symb<String>, String>>>,
 ) -> Rewrite {
     // Clone gamma to have a local context.
+    let mut prev_symbols = HashMap::new();
     for v in rule.ctx.clone() {
         let (vname, ty) = v;
         let ty = ty.map(|ty| map_to_node(mod_name.clone(), gamma, rew_rules, ty).unwrap());
-        let node = LNode::new_meta_var(ty.clone(), Some(vname));
+        let node = LNode::new_meta_var(ty.clone(), Some(&vname));
         let name = format!("{mod_name}.{vname}");
-        gamma.insert(name, Some(node));
+        if let Some(term) = gamma.get(&name) {
+            prev_symbols.insert(name.clone(), term.clone());
+        }
+        gamma.insert(name, node);
     }
 
     let lhs = map_to_node(mod_name.clone(), gamma, rew_rules, rule.lhs).unwrap();
@@ -60,25 +64,31 @@ fn parse_rule(
         gamma.remove(&name);
     });
 
+    gamma.extend(prev_symbols);
     Rewrite(lhs, rhs)
 }
 
 fn map_to_node(
     mod_name: String,
-    gamma: &mut HashMap<String, Option<Rc<LNode>>>,
+    gamma: &mut HashMap<String, Rc<LNode>>,
     rew_rules: &mut HashMap<usize, Vec<Rewrite>>,
-    app: App<AppH<Symb<&str>, &str>>,
+    app: App<AppH<Symb<String>, String>>,
 ) -> Option<Rc<LNode>> {
     let head = match app.head.clone() {
         AppH::Atom(Symb { path, name }) => {
             // start new parsing if `path` has not been encountered.
             let path_string = path.join(".");
             if !path.is_empty() && !OPEN_FILES.lock().unwrap().contains(&path_string) {
-                OPEN_FILES.lock().unwrap().insert(path_string.clone());
                 let filepath = format!("{path_string}.dk");
+                
+                // Extend gamma with the new definitions in `gamma_new`.
                 let Context(_, new_rules) = parse(filepath, gamma);
+
+                // Extend rewrite rules.
                 for (head, head_rules) in new_rules {
                     for rule in head_rules {
+                        // If I am extending the set of rules previously defined, push the new
+                        // rule.
                         if let Some(rules) = rew_rules.get_mut(&head) {
                             rules.push(rule);
                         } else {
@@ -86,7 +96,6 @@ fn map_to_node(
                         }
                     }
                 }
-                // rew_rules.extend(new_rules);
             }
 
             if name == "Type" {
@@ -98,8 +107,7 @@ fn map_to_node(
                     format!("{path_string}.{name}")
                 };
 
-                let term = gamma.get(&name).map(|t| t.clone());
-                term.unwrap_or_else(|| panic!("Symbol {:?} not in context", name))
+                gamma.get(&name).map(|t| t.clone())
             }
         }
         AppH::Abst(x, t, body) => {
@@ -108,13 +116,19 @@ fn map_to_node(
                     .expect("No type inference admitted.")
             });
 
-            let node = LNode::new_bvar(t, Some(x));
             let name = format!("{mod_name}.{x}");
+            let node = LNode::new_bvar(t, Some(&name));
 
-            gamma.insert(name.clone(), Some(node.clone()));
+            let prev_symb = gamma.get(&name).cloned();
+            gamma.insert(name.clone(), node.clone());
             let body =
                 map_to_node(mod_name.clone(), gamma, rew_rules, body.as_ref().clone()).unwrap();
             let abs = LNode::new_abs(node.clone(), body);
+
+            gamma.remove(&name);
+            if let Some(term) = prev_symb {
+                gamma.insert(name, term);
+            }
 
             Some(abs)
         }
@@ -123,11 +137,19 @@ fn map_to_node(
 
             match x {
                 Some(x) => {
-                    let a = LNode::new_bvar(a, Some(x));
                     let name = format!("{mod_name}.{x}");
-                    gamma.insert(name.clone(), Some(a.clone()));
+                    let a = LNode::new_bvar(a, Some(&name));
+                    // let gamma = &mut gamma.clone();
+
+                    let prev_symb = gamma.get(&name).cloned();
+                    gamma.insert(name.clone(), a.clone());
                     let t = map_to_node(mod_name.clone(), gamma, rew_rules, t.as_ref().clone())
                         .unwrap();
+
+                    gamma.remove(&name);
+                    if let Some(term) = prev_symb {
+                        gamma.insert(name, term);
+                    }
 
                     let node = LNode::new_prod(a.clone(), t.clone());
 
@@ -148,41 +170,27 @@ fn map_to_node(
 
     let mut res = head;
     // Apply all the arguments to the head node (left application)
-    for arg in app.args {
+    for arg in &app.args {
         // if arg is a wildcard, apply a var on which you can infer
-        let node = if let AppH::Atom(Symb { name: "_", .. }) = arg.head {
-            LNode::new_meta_var(None, Some("_"))
-        } else {
-            map_to_node(mod_name.clone(), gamma, rew_rules, arg.clone())
-                .expect("Something went wrong")
+        let node = match &arg.head {
+            AppH::Atom(Symb { name, .. }) if name == "_" => LNode::new_meta_var(None, Some("_")),
+            _ => map_to_node(mod_name.clone(), gamma, rew_rules, arg.clone())
+                .expect("Something went wrong"),
         };
 
-        res = Some(LNode::new_app(res.unwrap(), node));
+        let head = res.clone().unwrap_or_else(|| panic!("Error in {:?}", app));
+        res = Some(LNode::new_app(head, node));
     }
 
     res
 }
 
-pub fn print_context(gamma: &HashMap<String, Option<Rc<LNode>>>) {
-    info!(target: "CONTEXT", "{}", "-".repeat(57));
-    info!(target: "CONTEXT", "| {0: <30} | {1: <20} |", "Symbol", "Address");
-    info!(target: "CONTEXT", "{}", "-".repeat(57));
-    for (key, ty) in gamma {
-        if let Some(ty) = ty {
-            info!(target: "CONTEXT", "| {0: <30} | {1: <20p} |", key, *ty);
-        } else {
-            info!(target: "CONTEXT", "| {0: <30} | {1: <20} |", key, "None");
-        }
-    }
-    info!(target: "CONTEXT", "{}", "-".repeat(57));
-}
-
-pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -> Context {
+pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Context {
     let cmds = fs::read_to_string(&filepath);
     let cmds = cmds.expect("File not found.");
 
-    println!("Trying to parse {filepath:?}");
-    let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
+    // let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
+    let parse: ParseResult<_> = Lazy::<_, Symb<String>, String>::new(cmds.lines()).collect();
     let parse = parse.unwrap();
 
     let mut rew_rules = HashMap::new();
@@ -190,9 +198,19 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
         .strip_suffix(".dk")
         .expect("File has not `.dk` extension.")
         .to_string();
+    OPEN_FILES.lock().unwrap().insert(mod_name.clone());
 
+    let bar = ProgressBar::new(parse.len() as u64);
+    bar.set_message(filepath.clone());
+    bar.set_style(
+        ProgressStyle::default_bar()
+        .template("[ Parsing {msg} ] {bar:>40}")
+        .unwrap()
+        .progress_chars("#-"),
+    );
     for cmd in parse {
-        // dbg!(&cmd);
+        bar.inc(1);
+
         match cmd.clone() {
             Command::Intro(name, app_terms, it) => {
                 let name_mod = format!("{mod_name}.{name}");
@@ -201,13 +219,13 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                     let typ = map_to_node(mod_name.clone(), gamma, &mut rew_rules, node.clone());
                     let term = LNode::new_bvar(typ, Some(name));
                     let name = format!("{mod_name}.{name}");
-                    gamma.insert(name, Some(term));
+                    gamma.insert(name, term);
                 }
 
                 let term = match it {
                     Intro::Declaration(x) => {
                         let t = map_to_node(mod_name.clone(), gamma, &mut rew_rules, x);
-                        let node = LNode::new_var(t, name);
+                        let node = LNode::new_var(t, &name_mod);
 
                         node.clone()
                     }
@@ -218,7 +236,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                             map_to_node(mod_name.clone(), gamma, &mut rew_rules, x)
                                 .expect("Error encountered")
                         });
-                        let node = LNode::new_var(ty, name);
+                        let node = LNode::new_var(ty, &name_mod);
 
                         // if `def x := ...`, add y to rewrite rules.
                         if let Some(y) = y {
@@ -244,12 +262,13 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                 let mut res = term;
                 for (name, _) in app_terms.iter().rev() {
                     let name = format!("{mod_name}.{name}");
-                    let term = gamma.get(&name).unwrap().clone().unwrap();
+                    let term = gamma.get(&name).unwrap().clone();
                     gamma.remove(&name);
                     res = LNode::new_abs(term, res);
                 }
 
-                gamma.insert(name_mod, Some(res));
+                // println!("Inserted {:?}", res);
+                gamma.insert(name_mod, res);
             }
             Command::Rules(rules) => {
                 let rules: Vec<_> = rules
@@ -257,6 +276,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                     .map(|rule| parse_rule(mod_name.clone(), gamma, &mut rew_rules, rule.clone()))
                     .collect();
 
+                // println!("{:#?}", gamma);
                 for Rewrite(lhs, rhs) in rules {
                     let head = get_head(lhs.clone());
                     let head = Rc::into_raw(head) as usize;
@@ -268,20 +288,12 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Option<Rc<LNode>>>) -
                         rew_rules.insert(head, vec![Rewrite(lhs, rhs)]);
                     }
                 }
-
-                // rew_rules.append(&mut rules);
             }
         }
     }
 
-    // RIMUOVO I SIMBOLI BVAR
-    let gamma: HashMap<String, Option<_>> = gamma
-        .into_iter()
-        .filter(|(_, term)| term.is_none() || !term.as_ref().unwrap().is_bvar())
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    Context(gamma, rew_rules)
+    bar.finish_with_message(filepath.clone());
+    Context(gamma.clone(), rew_rules)
 }
 
 mod tests {
@@ -317,34 +329,14 @@ mod tests {
 
         let c = parse(file_path.to_string(), &mut HashMap::new());
         let Context(gamma, rules) = c;
-        print_context(&gamma);
 
-        let nat = gamma.get("nat.Nat").unwrap().clone().unwrap();
-        let zero = gamma.get("nat.zero").unwrap().clone().unwrap();
-        let k2 = gamma.get("nat.K2").unwrap().clone().unwrap();
+        let nat = gamma.get("nat.Nat").unwrap().clone();
+        let zero = gamma.get("nat.zero").unwrap().clone();
+        let k2 = gamma.get("nat.K2").unwrap().clone();
         let k2_ptr = Rc::into_raw(k2) as usize;
         let rules = rules.get(&k2_ptr);
         info!("{:?}", rules);
 
         assert_eq!(zero.get_type().unwrap(), nat);
-    }
-
-    #[test]
-    fn test_dependant() {
-        setup();
-        let Context(gamma, _) = parse(String::from("vec.dk"), &mut HashMap::new());
-
-        print_context(&gamma);
-    }
-
-    #[test]
-    fn test_lib() {
-        setup();
-        env::set_current_dir("focalide").expect("Could not set directory");
-        let filepath = String::from("additive_law.dk");
-
-        let Context(gamma, _) = parse(filepath, &mut HashMap::new());
-        print_context(&gamma);
-        println!("Context has {} symbols", gamma.len());
     }
 }

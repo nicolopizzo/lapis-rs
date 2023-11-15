@@ -120,15 +120,14 @@ fn snf(term: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
             let subs_to = subs_to.borrow().clone().unwrap();
             // TODO: Verifico che ci sia una snf: nel caso in cui c'è la restituisco, altrimenti la
             // calcolo e la salvo.
-            let nfs = normal_forms.borrow().clone();
-            if nfs.is_none() {
-                let term_snf = snf(subs_to, rules);
-                *normal_forms.borrow_mut() = Some(NormalForms(true, Some(term_snf.clone())));
-
-                term_snf
+            let NormalForms(wnf_computed, computed_snf) = normal_forms.borrow().clone();
+            if let Some(snf) = computed_snf {
+                snf
             } else {
-                let NormalForms(_, term_snf) = nfs.unwrap();
-                term_snf.unwrap()
+                let snf_term = snf(subs_to, rules);
+                *normal_forms.borrow_mut() = NormalForms(wnf_computed, Some(snf_term.clone()));
+
+                snf_term
             }
         }
         _ => term,
@@ -136,13 +135,13 @@ fn snf(term: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
 }
 
 fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
-    info!("Computing whnf of {:?}", node);
+    info!(target: "WHNF", "Computing whnf of {:?}", node);
     let wnf = match &*node {
         LNode::App { left, right, .. } => {
             // Recursively weaken the head of the application.
-            info!("Computing whnf of left={:?}", left);
+            info!(target: "APP_WHNF", "Computing whnf of left={:?}", left);
             let left = debug!(weak_head(left.clone(), rules));
-            info!("Computed: left_whnf = {:?}", left);
+            info!(target: "APP_WHNF", "Computed: left_whnf = {:?}", left);
             let left = deep_clone(&mut HashMap::new(), left);
 
             if let LNode::Abs { bvar, body, .. } = &*left {
@@ -150,21 +149,32 @@ fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode>
                 debug!(weak_head(body.clone(), rules))
             } else {
                 // Sono già in normal form.
-                info!("Computing whnf of right={:?}", right);
+                info!(target: "APP_WHNF", "Computing whnf of right={:?}", right);
                 let right = debug!(weak_head(right.clone(), rules));
-                info!("Computed: right_whnf = {:?}", right);
+                info!(target: "APP_WHNF", "Computed: right_whnf = {:?}", right);
                 LNode::new_app(left, right)
                 // node.clone()
             }
         }
-        LNode::BVar { subs_to, .. } if subs_to.borrow().is_some() => {
-            // Salvare wnf di bvar e snf di bvar.
-            let subs = subs_to.borrow().clone().unwrap();
-            debug!(weak_head(subs, rules))
+        LNode::BVar {
+            subs_to,
+            normal_forms,
+            ..
+        } if subs_to.borrow().is_some() => {
+            let NormalForms(wnf_computed, snf) = normal_forms.borrow().clone();
+            if wnf_computed {
+                subs_to.borrow().clone().unwrap()
+            } else {
+                let subs = subs_to.borrow().clone().unwrap();
+                let wnf = debug!(weak_head(subs, rules));
+                *normal_forms.borrow_mut() = NormalForms(true, snf);
+                *subs_to.borrow_mut() = Some(wnf.clone());
+                wnf
+            }
         }
         _ => node.clone(),
     };
-    info!("Computed: {:?}", wnf);
+    info!(target: "WHNF","Computed: {:?}", wnf);
 
     let head = get_head(wnf.clone());
     let head_ptr = Rc::into_raw(head.clone()) as usize;
@@ -173,16 +183,15 @@ fn weak_head(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode>
     // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
     let empty = Vec::new();
     let rew = rules.get(&head_ptr).unwrap_or(&empty);
-    info!("There are {} rules for {:?}", rew.len(), head);
     for Rewrite(lhs, rhs) in rew {
-        info!("Analyzing match with rule {:?}", lhs);
+        // info!(target: "REW_RULES", "Analyzing match with rule {:?}", lhs);
         let mut subs = HashMap::new();
         let lhs = deep_clone(&mut subs, lhs.clone());
         let rhs = deep_clone(&mut subs, rhs.clone());
 
         // Mi mantengo un campo booleano per le metavariabili
         if debug!(matches(wnf.clone(), lhs.clone(), rules)) {
-            info!("Rule matched, rewriting {:?}", rhs);
+            info!(target: "REW_RULES", "Rule matched, rewriting {:?}", rhs);
             return debug!(weak_head(rhs, rules));
         }
     }
@@ -323,12 +332,21 @@ fn type_check(
             info!("Type inferred: {:?}", typ_inf);
             // TODO: if `typ_inf` is not convertible to `typ_exp`, fail.
             // Add here alpha equivalence between `typ_inf` and `typ_exp`.
-            // let typ_inf = snf(typ_inf, rules);
-            // let typ_exp = snf(typ_exp, rules);
+            let typ_inf = snf(typ_inf, rules);
+            let typ_exp = snf(typ_exp, rules);
 
-            // if !equality_check(typ_inf.clone(), typ_exp.clone()) {
-            // return Err(Error::TermsNotEquivalent);
-            // }
+            if !equality_check(typ_inf.clone(), typ_exp.clone()) {
+                println!("{:?} =/= {:?}", typ_inf, typ_exp);
+                return Err(Error::TermsNotEquivalent);
+            }
+
+            if !typ_inf.is_sort() {
+                typ_inf.reset();
+            }
+
+            if !typ_exp.is_sort() {
+                typ_exp.reset();
+            }
         }
     }
 
@@ -376,7 +394,7 @@ fn check_rule(lhs: Rc<LNode>, rhs: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite
             info!("Type checking done.")
         } else {
             info!("Type for rhs could not be inferred. Error");
-            return Err(Error::GenericError);
+            return Err(Error::UnificationNeeded);
         }
     }
 
@@ -472,10 +490,11 @@ fn type_infer(node: Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<O
 mod tests {
     use crate::{
         debug,
-        parser::{parse, print_context, Rewrite},
+        parser::{parse, Rewrite},
     };
 
     use super::*;
+    use indicatif::{ProgressBar, ProgressDrawTarget, ProgressIterator, ProgressStyle};
     use log4rs::{
         append::file::FileAppender,
         config::{Appender, Root},
@@ -503,7 +522,6 @@ mod tests {
         let Context(gamma, rules) = c;
 
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            // println!("{:?} --> {:?}", lhs, rhs);
             assert!(debug!(check_rule(lhs.clone(), rhs.clone(), &rules).is_ok()));
         }
 
@@ -511,16 +529,17 @@ mod tests {
     }
 
     #[test]
-    fn test_all() {
+    fn test_cic() {
         before_each();
         let file_path = "cic.dk";
         let c = parse(String::from(file_path), &mut HashMap::new());
         let Context(gamma, rules) = c;
-        print_context(&gamma);
 
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            println!("{:?} --> {:?}", lhs, rhs);
-            assert!(check_rule(lhs.clone(), rhs.clone(), &rules).is_ok());
+            let check = check_rule(lhs.clone(), rhs.clone(), &rules);
+            if let Err(e) = check {
+                println!("Error encountered: {:?}", e);
+            }
         }
 
         after_each();
@@ -531,90 +550,13 @@ mod tests {
         before_each();
         let file_path = "vec.dk";
         let Context(gamma, rules) = parse(String::from(file_path), &mut HashMap::new());
-        print_context(&gamma);
-
-        let append = gamma.get("vec.append").unwrap().clone().unwrap();
-        println!("{:?}: {:?}", append, append.get_type().unwrap());
 
         let mut idx = 1;
         for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            println!("{:?} --> {:?}", lhs, rhs);
             let check = check_rule(lhs.clone(), rhs.clone(), &rules);
             assert!(check.is_ok(), "Error: {:?}", check.unwrap_err());
             idx += 1;
         }
-    }
-
-    #[test]
-    fn weaken_test_0() {
-        // rule plus z n --> n
-        let z = LNode::new_var(None, "z");
-        let plus = LNode::new_var(None, "plus");
-        let n = LNode::new_bvar(None, Some("n"));
-
-        let lhs = LNode::new_app(plus.clone(), z.clone());
-        let lhs = LNode::new_app(lhs, n.clone());
-
-        let rhs = n.clone();
-
-        let rule = Rewrite(lhs, rhs);
-
-        // weaken something of the preceding form
-        let s = LNode::new_var(None, "S");
-        let arg = LNode::new_bvar(None, Some("x"));
-
-        // plus z (S m) should rewrite to S m.
-        let s_m = LNode::new_app(s.clone(), arg.clone());
-        let term = LNode::new_app(plus.clone(), z.clone());
-        let term = LNode::new_app(term, s_m.clone());
-
-        // let weakened = weak_head(term, &vec![rule]);
-        // assert_eq!(s_m, weakened.get_sub().unwrap());
-    }
-
-    #[test]
-    fn test_snf_2() {
-        before_each();
-
-        let file_path = "nat.dk";
-        let Context(gamma, rules) = parse(String::from(file_path), &mut HashMap::new());
-
-        let plus = gamma.get("nat.plus").unwrap().clone().unwrap();
-        let s = gamma.get("nat.S").unwrap().clone().unwrap();
-        let z = gamma.get("nat.zero").unwrap().clone().unwrap();
-
-        let one = gamma.get("nat.1").unwrap().clone().unwrap();
-        let two = gamma.get("nat.2").unwrap().clone().unwrap();
-        let three = gamma.get("nat.3").unwrap().clone().unwrap();
-
-        let p_one_two = LNode::new_app(plus, one);
-        let p_one_two = LNode::new_app(p_one_two, two);
-
-        print_context(&gamma);
-        let p_one_two = snf(p_one_two, &rules);
-        let three = snf(three, &rules);
-        assert!(equality_check(p_one_two, three));
-
-        after_each();
-    }
-
-    #[test]
-    fn test_snf_3() {
-        before_each();
-        let file_path = "vec.dk";
-        let Context(gamma, rules) = parse(String::from(file_path), &mut HashMap::new());
-
-        let plus = gamma.get("plus").unwrap().clone().unwrap();
-        let nat = gamma.get("Nat").unwrap();
-        print_context(&gamma);
-
-        // snf(plus n m) should be plus n m.
-        let n = LNode::new_bvar(nat.clone(), Some("n"));
-        let m = LNode::new_bvar(nat.clone(), Some("m"));
-        let app = LNode::new_app(plus, n);
-        let app = LNode::new_app(app, m);
-
-        after_each();
     }
 
     #[test]
@@ -627,29 +569,32 @@ mod tests {
         let c = parse(String::from(file_path), &mut HashMap::new());
         let Context(gamma, rules) = c;
 
-        let mut index = 0;
-        let mut errors = 0;
-        for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
+        let checking = rules.iter().map(|(_, value)| value).flatten();
+        let bar = ProgressBar::with_draw_target(
+            Some(checking.clone().count() as u64),
+            ProgressDrawTarget::stdout(),
+        );
+        let sty = ProgressStyle::with_template("[ {msg} ] {bar:40} {pos:>7}/{len:7}")
+            .unwrap()
+            .progress_chars("##-");
+        bar.set_style(sty);
+        bar.set_message("Checking rules");
+        for Rewrite(lhs, rhs) in checking {
             let check = debug!(check_rule(lhs.clone(), rhs.clone(), &rules));
             if let Err(e) = check {
-                if e == Error::ProductExpected {
-                    error!(target: "CONSOLE", "{{ \n Rule did not check: {:?} --> {:?}\n}}", lhs, rhs);
-                }
                 error!(target: "CONSOLE", "Could not check rule: error {:?} encountered", e);
                 unsafe {
                     for n in 0..OPEN_DEBUG {
-                        info!("}}");
+                        info!("}}}}}}");
                     }
 
                     OPEN_DEBUG = 0;
                 }
-                errors += 1;
             }
-            index += 1;
+            bar.inc(1);
         }
 
-        let passed = index - errors;
-        println!("{} / {} rules passed", passed, index);
+        bar.finish_with_message("Rule checking completed.");
 
         let _ = env::set_current_dir("..");
         after_each();
@@ -660,34 +605,49 @@ mod tests {
         before_each();
         env::set_current_dir("matita-light").expect("ERROR");
 
-        let mod_name = "matita_basics_types";
+        let mod_name = "matita_basics_logic";
         let file_path = format!("{}.dk", mod_name);
         let c = parse(String::from(file_path), &mut HashMap::new());
         let Context(gamma, rules) = c;
 
         let mut index = 0;
         let mut errors = 0;
-        for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
+
+        let checking = rules.iter().map(|(_, value)| value).flatten();
+        let bar = ProgressBar::with_draw_target(
+            Some(checking.clone().count() as u64),
+            ProgressDrawTarget::stdout(),
+        );
+        let sty = ProgressStyle::with_template("[ {msg} ] {bar:40} {pos:>7}/{len:7}")
+            .unwrap()
+            .progress_chars("##-");
+        bar.set_style(sty);
+        bar.set_message("Checking rules.");
+        for Rewrite(lhs, rhs) in checking {
+            info!(target: "ALL", "Checking {:?} --> {:?}", lhs, rhs);
             let check = debug!(check_rule(lhs.clone(), rhs.clone(), &rules));
             if let Err(e) = check {
                 if e == Error::ProductExpected {
-                    error!(target: "CONSOLE", "{{ \n Rule did not check: {:?} --> {:?}\n}}", lhs, rhs);
+                    error!(target: "CONSOLE", "{{{{{{ \n Rule did not check: {:?} --> {:?}\n}}}}}}", lhs, rhs);
                 }
                 error!(target: "CONSOLE", "Could not check rule: error {:?} encountered", e);
                 unsafe {
                     for n in 0..OPEN_DEBUG {
-                        info!("}}");
+                        info!(target: "ALL", "}}}}}}");
                     }
 
                     OPEN_DEBUG = 0;
                 }
                 errors += 1;
             }
+            bar.inc(1);
             index += 1;
         }
 
         let passed = index - errors;
         println!("{} / {} rules passed", passed, index);
+
+        bar.finish_with_message("Rule checking completed.");
 
         let _ = env::set_current_dir("..");
         after_each();

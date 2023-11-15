@@ -54,7 +54,7 @@ pub enum LNode {
         queue: RefCell<VecDeque<Weak<Self>>>,
         subs_to: RefCell<Option<Rc<Self>>>,
         ty: RefCell<Option<Rc<Self>>>,
-        normal_forms: RefCell<Option<NormalForms>>,
+        normal_forms: RefCell<NormalForms>,
         is_meta: bool,
         symb: Option<String>,
     },
@@ -66,7 +66,7 @@ pub enum LNode {
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
         ty: RefCell<Option<Rc<Self>>>,
-        normal_forms: RefCell<Option<NormalForms>>,
+        normal_forms: RefCell<NormalForms>,
         symb: String,
     },
     Type,
@@ -244,7 +244,7 @@ impl LNode {
             canonic: RefCell::new(Weak::new()),
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
-            normal_forms: RefCell::new(None),
+            normal_forms: RefCell::new(NormalForms(false, None)),
         })
     }
 
@@ -260,7 +260,7 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
             ty: RefCell::new(t),
-            normal_forms: RefCell::new(None),
+            normal_forms: RefCell::new(NormalForms(false, None)),
         })
     }
 
@@ -276,7 +276,7 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
             ty: RefCell::new(t),
-            normal_forms: RefCell::new(None),
+            normal_forms: RefCell::new(NormalForms(false, None)),
         })
     }
 
@@ -314,7 +314,7 @@ impl LNode {
 
     /// Reset all fields for sharing equality algorithm.
     pub fn reset(&self) {
-        self.set_canonic(Weak::new());
+        // self.set_canonic(Weak::new());
         self.set_building(false);
         *self.undir().borrow_mut() = Vec::new();
         *self.queue().borrow_mut() = VecDeque::new();
@@ -439,13 +439,13 @@ impl LNode {
         matches!(self, Self::Kind)
     }
 
-    pub fn normal_forms(&self) -> Option<NormalForms> {
-        match self {
-            Var { normal_forms, .. } => normal_forms.borrow().clone(),
-            BVar { normal_forms, .. } => normal_forms.borrow().clone(),
-            _ => unreachable!("Tried to get normal forms for node other than Variable"),
-        }
-    }
+    // pub fn normal_forms(&self) -> Option<NormalForms> {
+        // match self {
+            // Var { normal_forms, .. } => normal_forms.borrow().clone(),
+            // BVar { normal_forms, .. } => normal_forms.borrow().clone(),
+            // _ => unreachable!("Tried to get normal forms for node other than Variable"),
+        // }
+    // }
 
     pub fn subs_to(&self, x: Rc<Self>) {
         match self {
