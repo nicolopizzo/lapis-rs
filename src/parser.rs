@@ -37,10 +37,6 @@ pub fn get_head(term: Rc<LNode>) -> Rc<LNode> {
     }
 }
 
-// def X: ...
-//
-// [ X ] 
-
 fn parse_rule(
     mod_name: String,
     gamma: &mut HashMap<String, Rc<LNode>>,
@@ -84,9 +80,9 @@ fn map_to_node(
             let path_string = path.join(".");
             if !path.is_empty() && !OPEN_FILES.lock().unwrap().contains(&path_string) {
                 let filepath = format!("{path_string}.dk");
-                
+
                 // Extend gamma with the new definitions in `gamma_new`.
-                let Context(_, new_rules) = parse(filepath, gamma);
+                let Context(_, new_rules) = parse_inner(&filepath, gamma);
 
                 // Extend rewrite rules.
                 for (head, head_rules) in new_rules {
@@ -190,9 +186,13 @@ fn map_to_node(
     res
 }
 
-pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Context {
-    let cmds = fs::read_to_string(&filepath);
-    let cmds = cmds.expect("File not found.");
+pub fn parse(filepath: &str) -> Context {
+    parse_inner(filepath, &mut HashMap::new())
+}
+
+fn parse_inner(filepath: &str, gamma: &mut HashMap<String, Rc<LNode>>) -> Context {
+    let cmds = fs::read_to_string(filepath);
+    let cmds = cmds.expect("File not found");
 
     // let parse: ParseResult<_> = Strict::<_, Symb<&str>, &str>::new(&cmds).collect();
     let parse: ParseResult<_> = Lazy::<_, Symb<String>, String>::new(cmds.lines()).collect();
@@ -206,21 +206,22 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Contex
     OPEN_FILES.lock().unwrap().insert(mod_name.clone());
 
     let bar = ProgressBar::new(parse.len() as u64);
-    bar.set_message(filepath.clone());
     bar.set_style(
         ProgressStyle::default_bar()
-        .template("[ Parsing {msg} ] {bar:>40}")
-        .unwrap()
-        .progress_chars("#-"),
+            .template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
+            .unwrap()
+            .progress_chars("=-"),
     );
+    bar.set_message("Parsing...");
     for cmd in parse {
         bar.inc(1);
+        bar.tick();
 
-        match cmd.clone() {
+        match &cmd {
             Command::Intro(name, app_terms, it) => {
                 let name_mod = format!("{mod_name}.{name}");
 
-                for (name, node) in &app_terms {
+                for (name, node) in app_terms {
                     let typ = map_to_node(mod_name.clone(), gamma, &mut rew_rules, node.clone());
                     let term = LNode::new_bvar(typ, Some(name));
                     let name = format!("{mod_name}.{name}");
@@ -229,7 +230,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Contex
 
                 let term = match it {
                     Intro::Declaration(x) => {
-                        let t = map_to_node(mod_name.clone(), gamma, &mut rew_rules, x);
+                        let t = map_to_node(mod_name.clone(), gamma, &mut rew_rules, x.clone());
                         let node = LNode::new_var(t, &name_mod);
 
                         node.clone()
@@ -237,7 +238,7 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Contex
                     Intro::Definition(x, y) => {
                         // if Some(x) = x => t = map_to_node(..), altrimenti è None (caso di
                         // inferenza da checkare con bidirectional type_check).
-                        let ty = x.map(|x| {
+                        let ty = x.clone().map(|x| {
                             map_to_node(mod_name.clone(), gamma, &mut rew_rules, x)
                                 .expect("Error encountered")
                         });
@@ -247,7 +248,8 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Contex
                         if let Some(y) = y {
                             let lhs = node.clone();
                             let rhs =
-                                map_to_node(mod_name.clone(), gamma, &mut rew_rules, y).unwrap();
+                                map_to_node(mod_name.clone(), gamma, &mut rew_rules, y.clone())
+                                    .unwrap();
                             rew_rules.insert(
                                 Rc::into_raw(node.clone()) as usize,
                                 vec![Rewrite(lhs, rhs)],
@@ -259,7 +261,8 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Contex
                         node
                     }
                     Intro::Theorem(ty, _) => {
-                        let ty = map_to_node(mod_name.clone(), gamma, &mut rew_rules, ty).unwrap();
+                        let ty = map_to_node(mod_name.clone(), gamma, &mut rew_rules, ty.clone())
+                            .unwrap();
                         ty
                     }
                 };
@@ -297,7 +300,8 @@ pub fn parse(filepath: String, gamma: &mut HashMap<String, Rc<LNode>>) -> Contex
         }
     }
 
-    bar.finish_with_message(filepath.clone());
+    bar.finish_with_message("Parsing completed.");
+
     Context(gamma.clone(), rew_rules)
 }
 
@@ -332,7 +336,7 @@ mod tests {
         setup();
         let file_path = "nat.dk";
 
-        let c = parse(file_path.to_string(), &mut HashMap::new());
+        let c = parse(file_path);
         let Context(gamma, rules) = c;
 
         let nat = gamma.get("nat.Nat").unwrap().clone();

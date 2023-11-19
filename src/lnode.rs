@@ -172,8 +172,8 @@ impl LNode {
             Abs { parent: p, .. } => p.borrow_mut().push(parent),
             BVar { parent: p, .. } => p.borrow_mut().push(parent),
             Var { parent: p, .. } => p.borrow_mut().push(parent),
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            Type => (),
+            Kind => (),
         }
     }
 
@@ -188,13 +188,9 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
         });
 
-        if !left.is_sort() {
-            left.add_parent(app.clone());
-        }
+        left.add_parent(app.clone());
 
-        if !right.is_sort() {
-            right.add_parent(app.clone());
-        }
+        right.add_parent(app.clone());
 
         app
     }
@@ -212,9 +208,7 @@ impl LNode {
 
         bvar.bind_to(prod.clone());
 
-        if !body.is_sort() {
-            body.add_parent(prod.clone());
-        }
+        body.add_parent(prod.clone());
 
         prod
     }
@@ -232,9 +226,7 @@ impl LNode {
 
         bvar.bind_to(abs.clone());
 
-        if !body.is_sort() {
-            body.add_parent(abs.clone());
-        }
+        body.add_parent(abs.clone());
 
         abs
     }
@@ -479,18 +471,10 @@ impl LNode {
         matches!(self, Self::Kind)
     }
 
-    // pub fn normal_forms(&self) -> Option<NormalForms> {
-    // match self {
-    // Var { normal_forms, .. } => normal_forms.borrow().clone(),
-    // BVar { normal_forms, .. } => normal_forms.borrow().clone(),
-    // _ => unreachable!("Tried to get normal forms for node other than Variable"),
-    // }
-    // }
-
-    pub fn subs_to(&self, x: Rc<Self>) {
+    pub fn subs_to(&self, x: &Rc<Self>) {
         match self {
             BVar { subs_to, .. } => {
-                *subs_to.borrow_mut() = Some(x);
+                *subs_to.borrow_mut() = Some(x.clone());
             }
 
             _ => unreachable!("You can substitute only a bound variable"),

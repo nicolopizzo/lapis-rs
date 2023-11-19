@@ -5,11 +5,11 @@ use LNode::*;
 
 /// Structure that defines a Lambda-Graph (see [this](https://arxiv.org/pdf/1907.06101.pdf)).
 #[derive(Clone, Debug)]
-pub struct LGraph {
-    nodes: HashSet<Rc<LNode>>,
+pub struct LGraph<'a> {
+    nodes: HashSet<&'a Rc<LNode>>,
 }
 
-impl LGraph {
+impl<'a, 'b: 'a> LGraph<'a> {
     /// Returns an empty LGraph.
     pub fn new() -> Self {
         Self {
@@ -19,59 +19,62 @@ impl LGraph {
 
     /// Returns an LGraph that creates an edge between `r2` and `r1` and contains the children
     /// of both nodes.
-    pub fn from_roots(r1: Rc<LNode>, r2: Rc<LNode>) -> Self {
+    pub fn from_roots(r1: &'b Rc<LNode>, r2: &'b Rc<LNode>) -> Self {
         let mut nodes = HashSet::new();
         let mut ptrs = HashSet::new();
-        Self::rec_from(&mut nodes, &mut ptrs, r1.clone());
-        Self::rec_from(&mut nodes, &mut ptrs, r2.clone());
+        Self::rec_from(&mut nodes, &mut ptrs, r1);
+        Self::rec_from(&mut nodes, &mut ptrs, r2);
 
         // Creo un arco tra le due radici
         r1.add_undir(&r2);
         r2.add_undir(&r1);
 
-
         Self { nodes }
     }
 
-    fn rec_from(nodes: &mut HashSet<Rc<LNode>>, ptrs: &mut HashSet<usize>, node: Rc<LNode>) {
+    fn rec_from(
+        nodes: &mut HashSet<&'a Rc<LNode>>,
+        ptrs: &mut HashSet<usize>,
+        node: &'b Rc<LNode>,
+    ) {
         let ptr = Rc::into_raw(node.clone()) as usize;
         if !ptrs.contains(&ptr) {
             ptrs.insert(ptr);
-            nodes.insert(node.clone());
+            nodes.insert(node);
         }
 
         // Resettare il nodo.
         node.reset();
 
-        match &*node {
+        match &**node {
             App { left, right, .. } => {
                 let left_ptr = Rc::into_raw(left.clone()) as usize;
                 if !ptrs.contains(&left_ptr) {
                     ptrs.insert(left_ptr);
-                    nodes.insert(left.clone());
-                    Self::rec_from(nodes, ptrs, left.clone());
+                    nodes.insert(left);
+                    Self::rec_from(nodes, ptrs, left);
                 }
 
                 let right_ptr = Rc::into_raw(right.clone()) as usize;
                 if !ptrs.contains(&right_ptr) {
                     ptrs.insert(right_ptr);
-                    nodes.insert(right.clone());
-                    Self::rec_from(nodes, ptrs, right.clone());
+                    nodes.insert(right);
+                    Self::rec_from(nodes, ptrs, right);
                 }
             }
-            Prod { bvar, body, .. } => {
+            Prod { bvar, body, .. } | Abs { bvar, body, .. } => {
                 let bvar_ptr = Rc::into_raw(bvar.clone()) as usize;
                 if !ptrs.contains(&bvar_ptr) {
                     ptrs.insert(bvar_ptr);
-                    nodes.insert(bvar.clone());
-                    Self::rec_from(nodes, ptrs, bvar.clone());
+                    nodes.insert(bvar);
+                    Self::rec_from(nodes, ptrs, bvar);
                 }
 
                 let body_ptr = Rc::into_raw(body.clone()) as usize;
                 if !ptrs.contains(&body_ptr) {
                     ptrs.insert(body_ptr);
-                    nodes.insert(body.clone());
-                    Self::rec_from(nodes, ptrs, body.clone());
+                    nodes.insert(body);
+                    Self::rec_from(nodes, ptrs, body);
                 }
             }
             _ => (),
@@ -79,15 +82,15 @@ impl LGraph {
     }
 
     /// Adds `node` to the nodes of the graph.
-    pub fn add_node(&mut self, node: Rc<LNode>) {
+    pub fn add_node(&mut self, node: &'b Rc<LNode>) {
         self.nodes.insert(node);
     }
 
-    fn var_nodes(&self) -> Vec<Rc<LNode>> {
+    fn var_nodes(&self) -> Vec<&Rc<LNode>> {
         self.nodes
             .iter()
+            .map(|x| *x)
             .filter(|x| x.is_bvar() || x.is_var())
-            .map(|x| x.clone())
             .collect()
     }
 
@@ -100,15 +103,14 @@ impl LGraph {
         for n in &self.nodes {
             let c_n = n.canonic();
             if c_n.upgrade().is_none() {
-                self.build_equivalence_class(n.clone())?;
-            } else {
+                self.build_equivalence_class(n)?;
             }
         }
 
         Ok(())
     }
 
-    fn build_equivalence_class(&self, c: Rc<LNode>) -> Result<(), String> {
+    fn build_equivalence_class(&self, c: &Rc<LNode>) -> Result<(), String> {
         c.set_canonic(Rc::downgrade(&c));
         c.set_building(true);
         c.push_queue(&c);
@@ -120,13 +122,11 @@ impl LGraph {
             }
             let n = n.unwrap().upgrade().unwrap();
 
-            // If n is a `BVar` and is instatiated, use it instead of the theoretical variable. The following
-            // snippet is equal to the used code, but `n` should be
-
             // Check parents of n. If n is a `BVar` and is instatiated, use the substitution.
-            let mut parents: Vec<_> = n.get_parent().iter().map(|x| x.upgrade()).collect();
+            let mut parents: Vec<Option<Rc<LNode>>> =
+                n.get_parent().iter().map(|x| x.upgrade()).collect();
             while let Some(Some(m)) = parents.pop() {
-                // TODO: se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
+                // Se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
                 if m.is_bvar() && m.get_sub().is_some() {
                     let m_sub = m.get_sub().unwrap().clone();
@@ -134,11 +134,10 @@ impl LGraph {
                     parents.append(&mut m_parent);
                 }
 
-                // let parent = m.clone().canonic().borrow().upgrade();
                 let parent = m.canonic().upgrade();
                 match parent {
                     None => {
-                        if let Err(e) = self.build_equivalence_class(m.clone()) {
+                        if let Err(e) = self.build_equivalence_class(&m) {
                             return Err(e);
                         }
                     }
@@ -156,15 +155,12 @@ impl LGraph {
                 let m1 = m.canonic().upgrade();
                 match m1 {
                     None => {
-                        if let Err(e) = self.enqueue_and_propagate(m.clone(), c.clone()) {
+                        if let Err(e) = self.enqueue_and_propagate(&m, &c) {
                             return Err(e);
                         }
-
-                        // If `m` is not dropped, `borrowMut` error rises since `m` is borrowed as mut more than once
-                        drop(m);
                     }
                     Some(c1) => {
-                        if c1 != c {
+                        if c1 != *c {
                             return Err(String::from(
                                 "Error: found two representative nodes for the same class.",
                             ));
@@ -179,8 +175,8 @@ impl LGraph {
         Ok(())
     }
 
-    fn enqueue_and_propagate(&self, m: Rc<LNode>, c: Rc<LNode>) -> Result<(), String> {
-        match (&*m, &*c) {
+    fn enqueue_and_propagate(&self, m: &Rc<LNode>, c: &Rc<LNode>) -> Result<(), String> {
+        match (&**m, &**c) {
             (Prod { body: b1, .. }, Prod { body: b2, .. })
             | (Abs { body: b1, .. }, Abs { body: b2, .. }) => {
                 b1.add_undir(&b2);
@@ -208,7 +204,7 @@ impl LGraph {
             (BVar { .. }, BVar { .. }) => (),
             (BVar { subs_to, .. }, _) => {
                 if let Some(sub) = subs_to.borrow().clone() {
-                    return self.enqueue_and_propagate(sub, c);
+                    return self.enqueue_and_propagate(&sub, c);
                 } else {
                     return Err(String::from(
                         "Error: tried to compare two different kind of nodes.",
@@ -219,7 +215,7 @@ impl LGraph {
                 // TODO: Se la prima `BVar` ha una sostituzione, non per forza la sto confrontando con una BVar
                 // Devo quindi effettuare `enqueue_and_propagate` della sostituzione con v.
                 if let Some(sub) = subs_to.borrow().clone() {
-                    return self.enqueue_and_propagate(sub, m);
+                    return self.enqueue_and_propagate(&sub, m);
                 } else {
                     return Err(String::from(
                         "Error: tried to compare two different kind of nodes.",
@@ -244,11 +240,11 @@ impl LGraph {
     pub fn var_check(&self) -> bool {
         for v in self.var_nodes() {
             let w = v.canonic().upgrade().unwrap();
-            if v != w {
+            if *v != w {
                 if v.is_var() || w.is_var() {
                     return false;
                 }
-                match (&*v, &*w) {
+                match (&**v, &*w) {
                     (BVar { binder: b1, .. }, BVar { binder: b2, .. }) => {
                         let b1 = b1.borrow().clone().upgrade();
                         let b2 = b2.borrow().clone().upgrade();
@@ -306,14 +302,14 @@ mod tests {
         let app3 = LNode::new_app(abs3.clone(), abs4.clone());
         let root2 = LNode::new_app(app3.clone(), app3.clone());
 
-        let g = LGraph::from_roots(root1.clone(), root2.clone());
-
+        let g = LGraph::from_roots(&root1, &root2);
+        println!("{:?}", g.nodes.len());
         let check_res = g.blind_check();
         assert!(check_res.is_ok(), "{}", check_res.err().unwrap());
         g.nodes.iter().for_each(|n| {
             println!(
-                "{:?} -> {:?}",
-                n.clone(),
+                "[ {:?} ] -> [ {:?} ]",
+                n,
                 n.canonic().upgrade().expect("Error")
             )
         });
