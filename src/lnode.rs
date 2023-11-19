@@ -73,6 +73,9 @@ pub enum LNode {
     Kind,
 }
 
+// Creare una funzione per settare `undir` in cui si trattano ad hoc Type, Kind e Var, togliendo
+// undir anche da var.
+
 /// Implementing runtime equality for LNode.
 impl PartialEq for LNode {
     fn eq(&self, other: &Self) -> bool {
@@ -133,7 +136,9 @@ impl Debug for LNode {
             }
             BVar { subs_to, symb, .. } => {
                 if let Some(sub) = &*subs_to.borrow() {
-                    sub.fmt(f)
+                    f.write_str("[")?;
+                    sub.fmt(f)?;
+                    f.write_str("]")
                 } else if let Some(symb) = symb {
                     f.write_str(&symb)
                 } else {
@@ -308,103 +313,138 @@ impl LNode {
         match self {
             Var { ty, .. } => *ty.borrow_mut() = Some(ty_inf),
             BVar { ty, .. } => *ty.borrow_mut() = Some(ty_inf),
-            _ => unreachable!("Should not reach this"),
+            _ => (),
         }
     }
 
     /// Reset all fields for sharing equality algorithm.
     pub fn reset(&self) {
-        // self.set_canonic(Weak::new());
+        self.set_canonic(Weak::new());
         self.set_building(false);
         *self.undir().borrow_mut() = Vec::new();
         *self.queue().borrow_mut() = VecDeque::new();
     }
 
-    pub(crate) fn undir(&self) -> &RefCell<Vec<Weak<Self>>> {
+    pub(crate) fn undir(&self) -> Vec<Weak<Self>> {
         match self {
-            App { undir, .. } => undir,
-            Prod { undir, .. } => undir,
-            Abs { undir, .. } => undir,
-            BVar { undir, .. } => undir,
-            Var { undir, .. } => undir,
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            App { undir, .. }
+            | Prod { undir, .. }
+            | Abs { undir, .. }
+            | BVar { undir, .. }
+            | Var { undir, .. } => undir.borrow().to_vec(),
+            Type => Vec::new(),
+            Kind => Vec::new(),
         }
     }
 
-    pub(crate) fn canonic(&self) -> &RefCell<Weak<Self>> {
+    pub(crate) fn add_undir(&self, node: &Rc<Self>) {
         match self {
-            App { canonic, .. } => canonic,
-            Prod { canonic, .. } => canonic,
-            Abs { canonic, .. } => canonic,
-            BVar { canonic, .. } => canonic,
-            Var { canonic, .. } => canonic,
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            App { undir, .. }
+            | Prod { undir, .. }
+            | Abs { undir, .. }
+            | BVar { undir, .. }
+            | Var { undir, .. } => undir.borrow_mut().push(Rc::downgrade(node)),
+
+            _ => {}
+        }
+    }
+
+    pub(crate) fn canonic(&self) -> Weak<Self> {
+        match self {
+            App { canonic, .. }
+            | Prod { canonic, .. }
+            | Abs { canonic, .. }
+            | BVar { canonic, .. }
+            | Var { canonic, .. } => canonic.borrow().clone(),
+
+            // The canoic for the sort can only be the sort itself.
+            Type => Rc::downgrade(&Rc::new(Type)),
+            Kind => Rc::downgrade(&Rc::new(Kind)),
         }
     }
 
     pub(crate) fn set_canonic(&self, value: Weak<Self>) {
         match self {
-            App { canonic, .. } => *canonic.borrow_mut() = value,
-            Prod { canonic, .. } => *canonic.borrow_mut() = value,
-            Abs { canonic, .. } => *canonic.borrow_mut() = value,
-            BVar { canonic, .. } => *canonic.borrow_mut() = value,
-            Var { canonic, .. } => *canonic.borrow_mut() = value,
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            App { canonic, .. }
+            | Prod { canonic, .. }
+            | Abs { canonic, .. }
+            | BVar { canonic, .. }
+            | Var { canonic, .. } => *canonic.borrow_mut() = value,
+
+            Type | Kind => (),
         }
     }
 
-    pub(crate) fn building(&self) -> &RefCell<bool> {
+    pub(crate) fn building(&self) -> bool {
         match self {
-            App { building, .. } => building,
-            Prod { building, .. } => building,
-            Abs { building, .. } => building,
-            BVar { building, .. } => building,
-            Var { building, .. } => building,
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            App { building, .. }
+            | Prod { building, .. }
+            | Abs { building, .. }
+            | BVar { building, .. }
+            | Var { building, .. } => *building.borrow(),
+
+            Type | Kind => false,
         }
     }
 
     pub(crate) fn set_building(&self, b: bool) {
         match self {
-            App { building, .. } => *building.borrow_mut() = b,
-            Prod { building, .. } => *building.borrow_mut() = b,
-            Abs { building, .. } => *building.borrow_mut() = b,
-            BVar { building, .. } => *building.borrow_mut() = b,
-            Var { building, .. } => *building.borrow_mut() = b,
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            App { building, .. }
+            | Prod { building, .. }
+            | Abs { building, .. }
+            | BVar { building, .. }
+            | Var { building, .. } => *building.borrow_mut() = b,
+            Type | Kind => (),
         }
     }
 
-    pub(crate) fn queue(&self) -> &RefCell<VecDeque<Weak<Self>>> {
+    pub(crate) fn queue(&self) -> VecDeque<Weak<Self>> {
         match self {
-            App { queue, .. } => queue,
-            Prod { queue, .. } => queue,
-            Abs { queue, .. } => queue,
-            BVar { queue, .. } => queue,
-            Var { queue, .. } => queue,
-            Type => unreachable!(),
-            Kind => unreachable!(),
+            App { queue, .. }
+            | Prod { queue, .. }
+            | Abs { queue, .. }
+            | BVar { queue, .. }
+            | Var { queue, .. } => queue.borrow().clone(),
+
+            Type | Kind => VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn push_queue(&self, v: &Rc<Self>) {
+        match self {
+            App { queue, .. }
+            | Prod { queue, .. }
+            | Abs { queue, .. }
+            | BVar { queue, .. }
+            | Var { queue, .. } => queue.borrow_mut().push_back(Rc::downgrade(v)),
+
+            Type | Kind => (),
+        }
+    }
+
+    pub(crate) fn pop_queue(&self) -> Option<Weak<Self>> {
+        match self {
+            App { queue, .. }
+            | Prod { queue, .. }
+            | Abs { queue, .. }
+            | BVar { queue, .. }
+            | Var { queue, .. } => queue.borrow_mut().pop_front(),
+
+            Type | Kind => None,
         }
     }
 
     /// Returns the reference to the parent of the current node.
     pub(crate) fn get_parent(&self) -> Vec<Weak<Self>> {
-        let parent = match self {
-            App { parent, .. } => parent,
-            Prod { parent, .. } => parent,
-            Abs { parent, .. } => parent,
-            BVar { parent, .. } => parent,
-            Var { parent, .. } => parent,
-            Type => unreachable!(),
-            Kind => unreachable!(),
-        };
+        match self {
+            App { parent, .. }
+            | Prod { parent, .. }
+            | Abs { parent, .. }
+            | BVar { parent, .. }
+            | Var { parent, .. } => parent.borrow().to_vec(),
 
-        parent.borrow().clone()
+            Type | Kind => Vec::new(),
+        }
     }
 
     /// Binds a `BVar` node to an `Abs` node.
@@ -440,11 +480,11 @@ impl LNode {
     }
 
     // pub fn normal_forms(&self) -> Option<NormalForms> {
-        // match self {
-            // Var { normal_forms, .. } => normal_forms.borrow().clone(),
-            // BVar { normal_forms, .. } => normal_forms.borrow().clone(),
-            // _ => unreachable!("Tried to get normal forms for node other than Variable"),
-        // }
+    // match self {
+    // Var { normal_forms, .. } => normal_forms.borrow().clone(),
+    // BVar { normal_forms, .. } => normal_forms.borrow().clone(),
+    // _ => unreachable!("Tried to get normal forms for node other than Variable"),
+    // }
     // }
 
     pub fn subs_to(&self, x: Rc<Self>) {

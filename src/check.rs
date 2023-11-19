@@ -244,7 +244,6 @@ fn matches(term: Rc<LNode>, pattern: Rc<LNode>, rules: &HashMap<usize, Vec<Rewri
 
             true
         }
-        // TODO: implementare astrazioni e prodotti
         (
             LNode::Prod {
                 bvar: l1, body: b1, ..
@@ -281,8 +280,6 @@ fn equality_check(r1: Rc<LNode>, r2: Rc<LNode>) -> bool {
     } else {
         g.var_check()
     }
-
-    /* Controllo che i campi `undir`, `canonic`, etc... siano resettati? Oppure non serve? */
 }
 
 /// Verifies that inferring the type of `node` reduces to `typ_exp`.
@@ -305,6 +302,13 @@ fn type_check(
                 let bvar_ty = bvar.get_type();
                 if let Some(typ) = bvar_ty {
                     // TODO: if `typ` is not convertible to `typ_exp`, fail.
+                    let typ = snf(typ, rules);
+                    let typ_exp = snf(typ_exp.clone(), rules);
+
+                    if !equality_check(typ.clone(), typ_exp.clone()) {
+                        println!("{:?} =/= {:?}", typ, typ_exp);
+                        return Err(Error::TermsNotEquivalent);
+                    }
                 } else {
                     bvar.infer_as(a.clone());
                 }
@@ -322,7 +326,8 @@ fn type_check(
             *ty.borrow_mut() = Some(typ_exp);
         }
         _ => {
-            info!("Inferring type for {:?}", node);
+            // info!("Inferring type for {:?}", node);
+
             let typ_inf = debug!(type_infer(node, rules)?);
             if typ_inf.is_none() {
                 return Err(Error::UnificationNeeded);
@@ -330,22 +335,13 @@ fn type_check(
 
             let typ_inf = typ_inf.unwrap();
             info!("Type inferred: {:?}", typ_inf);
-            // TODO: if `typ_inf` is not convertible to `typ_exp`, fail.
-            // Add here alpha equivalence between `typ_inf` and `typ_exp`.
+            // If `typ_inf` is not convertible to `typ_exp`, fail.
             let typ_inf = snf(typ_inf, rules);
             let typ_exp = snf(typ_exp, rules);
 
             if !equality_check(typ_inf.clone(), typ_exp.clone()) {
                 println!("{:?} =/= {:?}", typ_inf, typ_exp);
                 return Err(Error::TermsNotEquivalent);
-            }
-
-            if !typ_inf.is_sort() {
-                typ_inf.reset();
-            }
-
-            if !typ_exp.is_sort() {
-                typ_exp.reset();
             }
         }
     }
@@ -618,9 +614,10 @@ mod tests {
             Some(checking.clone().count() as u64),
             ProgressDrawTarget::stdout(),
         );
-        let sty = ProgressStyle::with_template("[ {msg} ] {bar:40} {pos:>7}/{len:7}")
-            .unwrap()
-            .progress_chars("##-");
+        let sty =
+            ProgressStyle::with_template("[ {elapsed_time} ] {msg} {bar:40} {pos:>7}/{len:7}")
+                .unwrap()
+                .progress_chars("##-");
         bar.set_style(sty);
         bar.set_message("Checking rules.");
         for Rewrite(lhs, rhs) in checking {

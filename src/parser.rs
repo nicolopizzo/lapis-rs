@@ -37,6 +37,10 @@ pub fn get_head(term: Rc<LNode>) -> Rc<LNode> {
     }
 }
 
+// def X: ...
+//
+// [ X ] 
+
 fn parse_rule(
     mod_name: String,
     gamma: &mut HashMap<String, Rc<LNode>>,
@@ -123,12 +127,13 @@ fn map_to_node(
             gamma.insert(name.clone(), node.clone());
             let body =
                 map_to_node(mod_name.clone(), gamma, rew_rules, body.as_ref().clone()).unwrap();
-            let abs = LNode::new_abs(node.clone(), body);
 
             gamma.remove(&name);
             if let Some(term) = prev_symb {
                 gamma.insert(name, term);
             }
+
+            let abs = LNode::new_abs(node.clone(), body);
 
             Some(abs)
         }
