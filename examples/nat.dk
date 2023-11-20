@@ -4,30 +4,9 @@ zero: Nat.
 
 def S: Nat -> Nat.
 
-def 1 := S zero.
-def 2 := S 1.
-def 3 := S 2.
-def 4 := S 3.
-def 5 := S 4.
-def 6 := S 5.
-def 7 := S 6.
-def 8 := S 7.
-def 9 := S 8.
-def 10 := S 9.
-def 11 := S 10.
-def 12 := S 11.
-def 13 := S 12.
-def 14 := S 13.
-def 15 := S 14.
-def 16 := S 15.
-def 17 := S 16.
-def 18 := S 17.
-def 19 := S 18.
-def 20 := S 19.
-
 def plus: Nat -> Nat -> Nat.
-[ n ] plus zero n --> n
-[ m, n] plus (S m) n --> S (plus m n).
+[ n: Nat ] plus zero n --> n
+[ m: Nat, n: Nat] plus (S m) n --> S (plus m n).
 
-def K : Nat -> Nat := x => (S (S zero)).
-def K2 := x : Nat => S ( S zero ).
+(; def K : Nat -> Nat := x => (S (S zero)). ;)
+(; def K2 := x : Nat => S ( S zero ). ;)
