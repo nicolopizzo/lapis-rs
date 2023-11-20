@@ -102,6 +102,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
     pub fn blind_check(&self) -> Result<(), String> {
         for n in &self.nodes {
             let c_n = n.canonic();
+
+            // Invariant: canonic is set if it is Some(x) after upgrade.
             if c_n.upgrade().is_none() {
                 self.build_equivalence_class(n)?;
             }
@@ -130,12 +132,12 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
                 if m.is_bvar() && m.get_sub().is_some() {
                     let m_sub = m.get_sub().unwrap().clone();
-                    let mut m_parent = m_sub.get_parent().iter().map(|x| x.upgrade()).collect();
-                    parents.append(&mut m_parent);
+                    let m_parent: Vec<_> = m_sub.get_parent().iter().map(|x| x.upgrade()).collect();
+                    parents.extend(m_parent);
                 }
 
-                let parent = m.canonic().upgrade();
-                match parent {
+                let c_parent = m.canonic().upgrade();
+                match c_parent {
                     None => {
                         if let Err(e) = self.build_equivalence_class(&m) {
                             return Err(e);

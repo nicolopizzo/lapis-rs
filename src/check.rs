@@ -15,7 +15,8 @@ use crate::{
     debug,
     lgraph::LGraph,
     lnode::{LNode, NormalForms},
-    parser::{get_head, Context, Rewrite},
+    parser::{Context, Rewrite},
+    utils::get_head,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,21 +172,22 @@ fn weak_head(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode
         _ => node.clone(),
     };
 
-    let head = get_head(wnf.clone());
+    let head = get_head(&wnf);
     let head_ptr = Rc::into_raw(head.clone()) as usize;
 
     // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
     // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
-    let empty = Vec::new();
-    let rew = rules.get(&head_ptr).unwrap_or(&empty);
-    for Rewrite(lhs, rhs) in rew {
-        let mut subs = HashMap::new();
-        let lhs = deep_clone(&mut subs, &lhs);
-        let rhs = deep_clone(&mut subs, &rhs);
+    let rew = rules.get(&head_ptr);
+    if let Some(rew) = rew {
+        for Rewrite(lhs, rhs) in rew {
+            let mut subs = HashMap::new();
+            let lhs = deep_clone(&mut subs, &lhs);
+            let rhs = deep_clone(&mut subs, &rhs);
 
-        // Mi mantengo un campo booleano per le metavariabili
-        if debug!(matches(&wnf, &lhs, rules)) {
-            return debug!(weak_head(&rhs, rules));
+            // Mi mantengo un campo booleano per le metavariabili
+            if debug!(matches(&wnf, &lhs, rules)) {
+                return debug!(weak_head(&rhs, rules));
+            }
         }
     }
 
@@ -226,25 +228,62 @@ fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rew
          *    il match dei binder. In questo caso non li istanzio. Faccio puntare un puntatore con
          *    .canonic() i binder.
          * */
+        (LNode::BVar { subs_to, .. }, _) if subs_to.borrow().is_some() => {
+            let subs = subs_to.borrow().clone().unwrap();
+            matches(&subs, pattern, rules)
+        }
+        (_, LNode::BVar { subs_to, .. }) if subs_to.borrow().is_some() => {
+            let subs = subs_to.borrow().clone().unwrap();
+            matches(term, &subs, rules)
+        }
         (
-            _,
+            tterm,
             LNode::BVar {
-                subs_to, is_meta, ..
+                subs_to,
+                is_meta,
+                canonic,
+                binder: p_binder,
+                ..
             },
-        ) if *is_meta => match subs_to.borrow().clone() {
-            Some(subs) => matches(&subs, pattern, rules),
-            None => {
+        ) => {
+            // occur_check(metavar, term); ==> verifica che nel termine non ci sia metavar.
+            // se il check fallisce => panic();
+            if *is_meta {
                 *subs_to.borrow_mut() = Some(term.clone());
 
                 true
+            } else {
+                match tterm {
+                    LNode::BVar {
+                        binder: t_binder, ..
+                    } => {
+                        // println!("{:?} ??? {:?}", term, pattern);
+                        // Problema: `term` può essere una meta-variabile.
+                        // invariante: il binder deve essere stato reso uguale in precedenza.
+                        let c1 = t_binder.borrow().upgrade();
+                        if c1.is_none() {
+                            // println!("{:?} ?= {:?}", term, pattern);
+
+                            return false;
+                        }
+                        let c1 = c1.expect("BVar has not a binder").canonic().upgrade();
+                        let c2 = t_binder
+                            .borrow()
+                            .upgrade()
+                            .expect("BVar has not a binder")
+                            .canonic()
+                            .upgrade();
+
+                        if c2.is_none() {
+                            // Ci finisce
+                            // println!("ERROR::UNIF????");
+                        }
+
+                        c1 == c2
+                    }
+                    _ => false,
+                }
             }
-        },
-
-        // Case of variable bound to an abstraction.
-        (_, LNode::BVar { subs_to, .. }) => {
-            // *subs_to.borrow_mut() = Some(term.clone());
-
-            true
         }
         (
             LNode::Prod {
@@ -261,13 +300,7 @@ fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rew
             LNode::Abs {
                 bvar: l2, body: b2, ..
             },
-        ) => {
-            let b_res = matches(&l1, &l2, rules) && matches(&b1, &b2, rules);
-
-            // TODO: come dovrei gestire le astrazioni?
-
-            b_res
-        }
+        ) => matches(&l1, &l2, rules) && matches(&b1, &b2, rules),
         // Constant variables, sorts.
         _ => term == pattern,
     }
@@ -305,7 +338,7 @@ fn type_check(
                     let typ_exp = snf(&typ_exp, rules);
 
                     if !equality_check(&typ, &typ_exp) {
-                        println!("{:?} =/= {:?}", typ, typ_exp);
+                        // println!("{:?} =/= {:?}", typ, typ_exp);
                         return Err(Error::TermsNotEquivalent);
                     }
                 } else {
@@ -330,12 +363,14 @@ fn type_check(
             }
 
             let typ_inf = typ_inf.unwrap();
+
             // If `typ_inf` is not convertible to `typ_exp`, fail.
+            // println!("{:?} ?= {:?}", typ_inf, typ_exp);
             let typ_inf = snf(&typ_inf, rules);
             let typ_exp = snf(&typ_exp, rules);
 
             if !equality_check(&typ_inf, &typ_exp) {
-                println!("{:?} =/= {:?}", typ_inf, typ_exp);
+                // println!("{:?} =/= {:?}", typ_inf, typ_exp);
                 return Err(Error::TermsNotEquivalent);
             }
         }
@@ -380,25 +415,34 @@ fn check_rule(
     Ok(())
 }
 
-pub fn check_context(ctx: Context) -> Result<()> {
+pub fn check_context(ctx: &Context) -> Result<()> {
     let Context(gamma, rules) = ctx;
-
     // TODO: check definitions in gamma.
 
     let to_check = rules.iter().map(|(_, x)| x).flatten().collect::<Vec<_>>();
 
     let bar = ProgressBar::new(to_check.len() as u64);
-    let sty = ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
-        .unwrap()
-        .progress_chars("==-");
+    let sty =
+        ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
+            .unwrap()
+            .progress_chars("==-");
     bar.set_style(sty);
     bar.set_message("Checking rules");
+    bar.tick();
 
-    for Rewrite(lhs, rhs) in to_check {
-        let check = check_rule(lhs, rhs, &rules)?;
+    let mut errors = 0;
+    for Rewrite(lhs, rhs) in &to_check {
+        bar.inc(1);
+        let check = check_rule(lhs, rhs, &rules);
+        if let Err(e) = check {
+            errors += 1;
+
+            println!("Error: {:?}", e);
+        }
     }
 
     bar.finish_with_message("Check completed.");
+    println!("{} / {} rules had errors.", errors, to_check.len());
 
     Ok(())
 }
@@ -504,23 +548,15 @@ mod tests {
         env::set_current_dir("examples").expect("Could not set directory");
     }
 
-    fn after_each() {
-        env::set_current_dir("..").expect("Could not set dir");
-    }
-
     #[test]
     fn test_simple() {
         before_each();
         let filepath = "nat.dk";
         let c = parse(filepath);
 
-        let Context(gamma, rules) = c;
+        let check = check_context(&c);
 
-        for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            assert!(debug!(check_rule(&lhs, &rhs, &rules).is_ok()));
-        }
-
-        after_each();
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
     }
 
     #[test]
@@ -528,16 +564,10 @@ mod tests {
         before_each();
         let filepath = "cic.dk";
         let c = parse(filepath);
-        let Context(gamma, rules) = c;
 
-        for Rewrite(lhs, rhs) in rules.iter().map(|(_, value)| value).flatten() {
-            let check = check_rule(&lhs, &rhs, &rules);
-            if let Err(e) = check {
-                println!("Error encountered: {:?}", e);
-            }
-        }
+        let check = check_context(&c);
 
-        after_each();
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
     }
 
     #[test]
@@ -546,96 +576,33 @@ mod tests {
         let filepath = "vec.dk";
         let c = parse(filepath);
 
-        assert!(check_context(c).is_ok());
+        let check = check_context(&c);
+
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
     }
 
     #[test]
     fn test_lib() {
         before_each();
         env::set_current_dir("focalide").expect("ERROR");
+        let filepath = "additive_law.dk";
 
-        let mod_name = "additive_law";
-        let filepath = format!("{}.dk", mod_name);
-        let c = parse(&filepath);
-        let Context(gamma, rules) = c;
+        let ctx = parse(filepath);
 
-        let checking = rules.iter().map(|(_, value)| value).flatten();
-        let bar = ProgressBar::with_draw_target(
-            Some(checking.clone().count() as u64),
-            ProgressDrawTarget::stdout(),
-        );
-        let sty = ProgressStyle::with_template("[ {msg} ] {bar:40} {pos:>7}/{len:7}")
-            .unwrap()
-            .progress_chars("##-");
-        bar.set_style(sty);
-        bar.set_message("Checking rules");
-        for Rewrite(lhs, rhs) in checking {
-            let check = debug!(check_rule(lhs, rhs, &rules));
-            if let Err(e) = check {
-                error!(target: "CONSOLE", "Could not check rule: error {:?} encountered", e);
-                unsafe {
-                    for n in 0..OPEN_DEBUG {}
-
-                    OPEN_DEBUG = 0;
-                }
-            }
-            bar.inc(1);
-        }
-
-        bar.finish_with_message("Rule checking completed.");
-
-        let _ = env::set_current_dir("..");
-        after_each();
+        let check = check_context(&ctx);
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
     }
 
     #[test]
     fn test_matita() {
         before_each();
         env::set_current_dir("matita-light").expect("ERROR");
+        let filepath = "univs.dk";
+        // let filepath = "matita_basics_logic.dk";
 
-        let mod_name = "matita_basics_logic";
-        let filepath = format!("{}.dk", mod_name);
-        let c = parse(&filepath);
-        let Context(gamma, rules) = c;
+        let ctx = parse(filepath);
 
-        let mut index = 0;
-        let mut errors = 0;
-
-        let checking = rules.iter().map(|(_, value)| value).flatten();
-        let bar = ProgressBar::with_draw_target(
-            Some(checking.clone().count() as u64),
-            ProgressDrawTarget::stdout(),
-        );
-        let sty =
-            ProgressStyle::with_template("[ {elapsed_time} ] {msg} {bar:40} {pos:>7}/{len:7}")
-                .unwrap()
-                .progress_chars("##-");
-        bar.set_style(sty);
-        bar.set_message("Checking rules.");
-        for Rewrite(lhs, rhs) in checking {
-            let check = debug!(check_rule(lhs, rhs, &rules));
-            if let Err(e) = check {
-                if e == Error::ProductExpected {
-                    error!(target: "CONSOLE", "{{{{{{ \n Rule did not check: {:?} --> {:?}\n}}}}}}", lhs, rhs);
-                }
-                error!(target: "CONSOLE", "Could not check rule: error {:?} encountered", e);
-                unsafe {
-                    for n in 0..OPEN_DEBUG {}
-
-                    OPEN_DEBUG = 0;
-                }
-                errors += 1;
-            }
-            bar.inc(1);
-            index += 1;
-        }
-
-        let passed = index - errors;
-        println!("{} / {} rules passed", passed, index);
-
-        bar.finish_with_message("Rule checking completed.");
-
-        let _ = env::set_current_dir("..");
-        after_each();
+        let check = check_context(&ctx);
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
     }
 }

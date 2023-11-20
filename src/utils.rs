@@ -1,3 +1,7 @@
+use std::rc::Rc;
+
+use crate::lnode::LNode;
+
 #[macro_export]
 macro_rules! debug {
     ( $fun: expr ) => {{
@@ -8,4 +12,11 @@ macro_rules! debug {
         info!(target: "FOLDING", "}}}}}}");
         res
     }};
+}
+
+pub fn get_head(term: &Rc<LNode>) -> &Rc<LNode> {
+    match &**term {
+        LNode::App { left, .. } => get_head(left),
+        _ => term,
+    }
 }

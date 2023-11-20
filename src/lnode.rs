@@ -146,7 +146,6 @@ impl Debug for LNode {
                 }
             }
             Var { symb, .. } => f.write_str(&symb),
-            // Var { ty, .. } => f.debug_struct("Var").field("ty", ty).finish(),
             Type => f.write_str("Type"),
             Kind => f.write_str("Kind"),
         }
