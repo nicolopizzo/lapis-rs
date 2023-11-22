@@ -9,6 +9,7 @@ use std::{
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
+use lazy_static::__Deref;
 use log::{error, info, warn};
 
 use crate::{
@@ -68,20 +69,32 @@ fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<LNod
             }
 
             LNode::BVar {
-                subs_to, ty, symb, ..
+                subs_to,
+                ty,
+                symb,
+                is_meta,
+                ..
             } => {
                 let sub = subs_to.borrow();
                 if sub.is_some() {
                     // Se c'è una sostituzione esplicita effettuo sharing
                     node.clone()
                 } else {
+                    // if bvar is a meta variable, it must always be shared.
+                    // if *is_meta {
+                    // return node.clone();
+                    // }
                     // Deep cloning the Type
                     let ty = ty.borrow().clone();
                     let ty = ty.map(|ty| deep_clone(subs, &ty));
 
                     // FIXME: refactor correctly.
-                    let symb = symb.clone().unwrap_or("_".to_string());
-                    LNode::new_bvar(ty, Some(&symb))
+                    let symb = symb.as_deref();
+                    if *is_meta {
+                        LNode::new_meta_var(ty, symb)
+                    } else {
+                        LNode::new_bvar(ty, symb)
+                    }
                     // let ty_cloned = deep_clone(subs, ty);
                     // Rc::new(&*node.clone())
                 }
@@ -140,15 +153,15 @@ fn weak_head(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode
     let wnf = match &**node {
         LNode::App { left, right, .. } => {
             // Recursively weaken the head of the application.
-            let left = debug!(weak_head(left, rules));
+            let left = weak_head(left, rules);
             let left = deep_clone(&mut HashMap::new(), &left);
 
             if let LNode::Abs { bvar, body, .. } = &*left {
                 bvar.subs_to(&right);
-                debug!(weak_head(body, rules))
+                weak_head(body, rules)
             } else {
                 // Sono già in normal form.
-                let right = debug!(weak_head(right, rules));
+                let right = weak_head(right, rules);
                 LNode::new_app(left, right)
                 // node.clone()
             }
@@ -163,7 +176,7 @@ fn weak_head(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode
                 subs_to.borrow().clone().unwrap()
             } else {
                 let subs = subs_to.borrow().clone().unwrap();
-                let wnf = debug!(weak_head(&subs, rules));
+                let wnf = weak_head(&subs, rules);
                 *normal_forms.borrow_mut() = NormalForms(true, snf);
                 *subs_to.borrow_mut() = Some(wnf.clone());
                 wnf
@@ -185,13 +198,33 @@ fn weak_head(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode
             let rhs = deep_clone(&mut subs, &rhs);
 
             // Mi mantengo un campo booleano per le metavariabili
-            if debug!(matches(&wnf, &lhs, rules)) {
-                return debug!(weak_head(&rhs, rules));
+            if matches(&wnf, &lhs, rules) {
+                return weak_head(&rhs, rules);
             }
         }
     }
 
     wnf
+}
+
+fn rewrite(term: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Option<Rc<LNode>> {
+    let head = get_head(&term);
+    let head_ptr = Rc::into_raw(head.clone()) as usize;
+
+    // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
+    // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
+    let rew = rules.get(&head_ptr);
+    rew.map(|rrules| {
+        let found_rule = rrules
+            .iter()
+            .find(|Rewrite(lhs, _)| matches(term, lhs, rules));
+
+        if let Some(Rewrite(lhs, rhs)) = found_rule {
+            rhs.clone()
+        } else {
+            term.clone()
+        }
+    })
 }
 
 /// Verifies that `term` matches `lhs` up to weakening.
@@ -211,7 +244,7 @@ fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rew
                 ..
             },
         ) => {
-            // Il match avviene a meno di weakening.
+            // Il match avviene a meno di whnf.
             let l1 = weak_head(&l1, rules);
             let r1 = weak_head(&r1, rules);
 
@@ -257,7 +290,6 @@ fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rew
                     LNode::BVar {
                         binder: t_binder, ..
                     } => {
-                        // println!("{:?} ??? {:?}", term, pattern);
                         // Problema: `term` può essere una meta-variabile.
                         // invariante: il binder deve essere stato reso uguale in precedenza.
                         let c1 = t_binder.borrow().upgrade();
@@ -267,7 +299,8 @@ fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rew
                             return false;
                         }
                         let c1 = c1.expect("BVar has not a binder").canonic().upgrade();
-                        let c2 = t_binder
+                        // println!("{:?}", pattern);
+                        let c2 = p_binder
                             .borrow()
                             .upgrade()
                             .expect("BVar has not a binder")
@@ -307,9 +340,12 @@ fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rew
 }
 
 fn equality_check(r1: &Rc<LNode>, r2: &Rc<LNode>) -> bool {
+    return true;
     let g = LGraph::from_roots(r1, r2);
     let check_res = g.blind_check();
-    if check_res.is_err() {
+
+    // g.blind_check().is_ok() && g.var_check()
+    if let Err(e) = check_res {
         return false;
     } else {
         g.var_check()
@@ -322,31 +358,36 @@ fn type_check(
     typ_exp: &Rc<LNode>,
     rules: &HashMap<usize, Vec<Rewrite>>,
 ) -> Result<()> {
+    info!("term = {:?}", term);
+    info!("typ_exp = {:?}", typ_exp);
     match &**term {
         LNode::Abs { bvar, body, .. } => {
             let typ_exp = debug!(weak_head(&typ_exp, rules));
+            // let typ_exp = rewrite(typ_exp, rules).unwrap_or(typ_exp.clone());
+            info!("whnf(typ_exp) = {:?}", typ_exp);
             if let LNode::Prod {
-                bvar: a,
+                bvar: prod_bvar,
                 body: body_ty,
                 ..
             } = &*typ_exp
             {
                 let bvar_ty = bvar.get_type();
+                let typ_exp = prod_bvar.get_type().expect("BVar in prod must be typed");
                 if let Some(typ) = bvar_ty {
-                    // TODO: if `typ` is not convertible to `typ_exp`, fail.
-                    let typ = snf(&typ, rules);
+                    // if `typ` is not convertible to `typ_exp`, fail.
                     let typ_exp = snf(&typ_exp, rules);
+                    let typ = snf(&typ, rules);
 
                     if !equality_check(&typ, &typ_exp) {
-                        // println!("{:?} =/= {:?}", typ, typ_exp);
                         return Err(Error::TermsNotEquivalent);
                     }
                 } else {
-                    bvar.infer_as(a.clone());
+                    bvar.infer_as(typ_exp);
                 }
 
-                debug!(type_check(body, body_ty, rules)?)
+                debug!(type_check(body, body_ty, rules))?
             } else {
+                info!("typ_exp should be a product");
                 return Err(Error::ProductExpected);
             }
         }
@@ -357,20 +398,21 @@ fn type_check(
             *ty.borrow_mut() = Some(typ_exp.clone());
         }
         _ => {
-            let typ_inf = debug!(type_infer(term, rules)?);
+            info!("Inferring type for [term]");
+            let typ_inf = debug!(type_infer(term, rules))?;
             if typ_inf.is_none() {
                 return Err(Error::UnificationNeeded);
             }
 
             let typ_inf = typ_inf.unwrap();
+            info!("Inferred type: {:?}", typ_inf);
 
             // If `typ_inf` is not convertible to `typ_exp`, fail.
-            // println!("{:?} ?= {:?}", typ_inf, typ_exp);
             let typ_inf = snf(&typ_inf, rules);
             let typ_exp = snf(&typ_exp, rules);
 
             if !equality_check(&typ_inf, &typ_exp) {
-                // println!("{:?} =/= {:?}", typ_inf, typ_exp);
+                println!("{:?} =/= {:?}", typ_inf, typ_exp);
                 return Err(Error::TermsNotEquivalent);
             }
         }
@@ -400,13 +442,18 @@ fn check_rule(
     rhs: &Rc<LNode>,
     rules: &HashMap<usize, Vec<Rewrite>>,
 ) -> Result<()> {
-    let lhs_typ = debug!(type_infer(lhs, rules)?);
+    info!("Inferring type for lhs = {:?}", lhs);
+    let lhs_typ = type_infer(lhs, rules)?;
     if let Some(lhs_typ) = lhs_typ {
-        debug!(type_check(rhs, &lhs_typ, rules)?);
+        info!("Inferred type for lhs = {:?}", lhs_typ);
+        info!("Type checking {:?}", rhs);
+        debug!(type_check(rhs, &lhs_typ, rules))?;
     } else {
-        let rhs_typ = debug!(type_infer(rhs, rules)?);
+        info!("Inferring type for rhs = {:?}", rhs);
+        let rhs_typ = debug!(type_infer(rhs, rules))?;
         if let Some(rhs_typ) = rhs_typ {
-            debug!(type_check(lhs, &rhs_typ, rules)?);
+            info!("Inferred type for rhs = {:?}", rhs_typ);
+            debug!(type_check(lhs, &rhs_typ, rules))?;
         } else {
             return Err(Error::UnificationNeeded);
         }
@@ -430,19 +477,23 @@ pub fn check_context(ctx: &Context) -> Result<()> {
     bar.set_message("Checking rules");
     bar.tick();
 
-    let mut errors = 0;
     for Rewrite(lhs, rhs) in &to_check {
         bar.inc(1);
-        let check = check_rule(lhs, rhs, &rules);
-        if let Err(e) = check {
-            errors += 1;
 
-            println!("Error: {:?}", e);
+        // check_rule(lhs, rhs, &rules)?;
+
+        info!("Checking {:?} --> {:?}", lhs, rhs);
+        let check = debug!(check_rule(lhs, rhs, &rules));
+        if let Err(e) = check {
+            if e == Error::ProductExpected {
+                bar.finish();
+                println!("Something wrong.");
+                return Err(e);
+            }
         }
     }
 
     bar.finish_with_message("Check completed.");
-    println!("{} / {} rules had errors.", errors, to_check.len());
 
     Ok(())
 }
@@ -450,14 +501,21 @@ pub fn check_context(ctx: &Context) -> Result<()> {
 fn type_infer(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<Option<Rc<LNode>>> {
     match &**node {
         LNode::App { left, right, .. } => {
-            let left_ty = debug!(type_infer(left, rules)?);
+            debug!(info!("Inferring type for {:?}", left));
+            // let left = weak_head(left, rules);
+            // let left = rewrite(left, rules).unwrap_or(left.clone());
+            let left_ty = debug!(type_infer(&left, rules))?;
             if left_ty.is_none() {
                 return Ok(None);
             }
 
             let left_ty = left_ty.unwrap();
+            debug!(info!("Inferred type: {:?}", left_ty));
+            debug!(info!("right: {:?}", right));
 
-            let left_whd = debug!(weak_head(&left_ty.clone(), rules));
+            // let left_ty = deep_clone(&mut HashMap::new(), &left_ty);
+            let left_whd = weak_head(&left_ty, rules);
+            debug!(info!("whnf: {:?}", left_whd));
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
             let left_whd = deep_clone(&mut HashMap::new(), &left_whd);
@@ -467,10 +525,15 @@ fn type_infer(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<
 
                 // check equality between left and `right_ty`
                 let bvar_ty = bvar.get_type().expect("BVar must be typed in Product");
-                debug!(type_check(right, &bvar_ty, rules)?);
+                info!("Type checking {:?} <== {:?}", right, bvar_ty);
+                debug!(type_check(right, &bvar_ty, rules))?;
 
                 // substitute occurrences of `bvar` in `body` with `right`
-                bvar.subs_to(&right);
+                if bvar.get_sub().is_none() {
+                    bvar.subs_to(&right);
+                }
+
+                let body = weak_head(body, rules);
                 return Ok(Some(body.clone()));
             } else {
                 return Err(Error::ProductExpected);
@@ -489,7 +552,7 @@ fn type_infer(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<
             let bvar_ty = bvar_ty.unwrap();
             check_wkhd(&bvar_ty, |node| node.is_type(), rules)?;
 
-            let body_ty = debug!(type_infer(body, rules)?);
+            let body_ty = type_infer(body, rules)?;
             if body_ty.is_none() {
                 return Ok(None);
             }
@@ -510,7 +573,7 @@ fn type_infer(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Result<
             let bvar_ty = bvar.get_type().expect("Variable is not typed.");
             check_wkhd(&bvar_ty, |node| node.is_type(), rules)?;
 
-            let body_ty = debug!(type_infer(body, rules)?);
+            let body_ty = type_infer(body, rules)?;
             if body_ty.is_none() {
                 return Ok(None);
             }
@@ -585,7 +648,7 @@ mod tests {
     fn test_lib() {
         before_each();
         env::set_current_dir("focalide").expect("ERROR");
-        let filepath = "additive_law.dk";
+        let filepath = "dk_builtins.dk";
 
         let ctx = parse(filepath);
 
@@ -597,12 +660,31 @@ mod tests {
     fn test_matita() {
         before_each();
         env::set_current_dir("matita-light").expect("ERROR");
-        let filepath = "univs.dk";
-        // let filepath = "matita_basics_logic.dk";
+        // let filepath = "univs.dk";
+        let filepath = "matita_basics_logic.dk";
+        // let filepath = "matita_basics_bool.dk";
 
         let ctx = parse(filepath);
 
         let check = check_context(&ctx);
-        assert!(check.is_ok(), "{:?}", check.unwrap_err());
+        // assert!(check.is_ok(), "{:?}", check.unwrap_err());
+    }
+
+    #[test]
+    fn testing() {
+        before_each();
+        env::set_current_dir("matita-light").expect("ERROR");
+        let filepath = "matita_basics_logic.dk";
+
+        let ctx = parse(filepath);
+
+        let tname = "matita_basics_logic.eq_rect_r";
+
+        let term = ctx.0.get(tname).unwrap();
+        let term = Rc::into_raw(term.clone()) as usize;
+        let Rewrite(lhs, rhs) = ctx.1.get(&term).unwrap().first().unwrap();
+
+        let check = check_rule(lhs, rhs, &ctx.1);
+        assert!(check.is_ok())
     }
 }

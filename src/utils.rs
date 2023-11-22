@@ -12,6 +12,16 @@ macro_rules! debug {
         info!(target: "FOLDING", "}}}}}}");
         res
     }};
+
+
+    ( $fun: expr, $target: expr ) => {{
+        info!(target: $target, "{{{{{{");
+        unsafe { OPEN_DEBUG += 1 }
+        let res = $fun;
+        unsafe { OPEN_DEBUG -= 1 }
+        info!(target: $target, "}}}}}}");
+        res
+    }};
 }
 
 pub fn get_head(term: &Rc<LNode>) -> &Rc<LNode> {

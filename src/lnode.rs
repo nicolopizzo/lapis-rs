@@ -7,6 +7,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use log::info;
 use LNode::*;
 
 #[derive(Clone)]
@@ -112,7 +113,7 @@ impl Debug for LNode {
                 f.write_str(" ")?;
                 // If on the right I have a substituted bvar, I check the substitution for pretty
                 // printing (if I have something other than variables, open parentheses).
-                let right = right.get_sub().unwrap_or(right.clone());
+                let right = &right.get_sub().unwrap_or(right.clone());
                 if !(right.is_bvar() || right.is_var()) {
                     f.write_str("(")?;
                     right.fmt(f)?;
@@ -123,26 +124,32 @@ impl Debug for LNode {
             }
             Prod { bvar, body, .. } => {
                 if let BVar { symb, .. } = &**bvar {
-                    bvar.fmt(f)?;
                     if symb.is_some() {
-                        f.write_str(":")?;
+                        bvar.fmt(f)?;
+                        f.write_str(" : ")?;
                     }
                 }
                 if let Some(typ) = bvar.get_type() {
-                    typ.fmt(f)?;
+                    if typ.is_prod() || typ.is_abs() {
+                        f.write_str("(")?;
+                        typ.fmt(f)?;
+                        f.write_str(")")?;
+                    } else {
+                        typ.fmt(f)?;
+                    }
                 }
                 f.write_str(" -> ")?;
                 body.fmt(f)
             }
             BVar { subs_to, symb, .. } => {
                 if let Some(sub) = &*subs_to.borrow() {
-                    f.write_str("[")?;
-                    sub.fmt(f)?;
-                    f.write_str("]")
+                    // f.write_str("[")?;
+                    sub.fmt(f)
+                    // f.write_str("]")
                 } else if let Some(symb) = symb {
                     f.write_str(&symb)
                 } else {
-                    f.write_str("")
+                    f.write_str("_")
                 }
             }
             Var { symb, .. } => f.write_str(&symb),
@@ -312,7 +319,7 @@ impl LNode {
     pub fn reset(&self) {
         self.set_canonic(Weak::new());
         self.set_building(false);
-        *self.undir().borrow_mut() = Vec::new();
+        self.reset_undir();
         *self.queue().borrow_mut() = VecDeque::new();
     }
 
@@ -335,6 +342,30 @@ impl LNode {
             | Abs { undir, .. }
             | BVar { undir, .. }
             | Var { undir, .. } => undir.borrow_mut().push(Rc::downgrade(node)),
+
+            _ => {}
+        }
+    }
+
+    pub(crate) fn reset_undir(&self) {
+        match self {
+            App { undir, .. }
+            | Prod { undir, .. }
+            | Abs { undir, .. }
+            | BVar { undir, .. }
+            | Var { undir, .. } => *undir.borrow_mut() = Vec::new(),
+
+            _ => {}
+        }
+    }
+
+    pub(crate) fn reset_queue(&self) {
+        match self {
+            App { queue, .. }
+            | Prod { queue, .. }
+            | Abs { queue, .. }
+            | BVar { queue, .. }
+            | Var { queue, .. } => *queue.borrow_mut() = Vec::new().into(),
 
             _ => {}
         }

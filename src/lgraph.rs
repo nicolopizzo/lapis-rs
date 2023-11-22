@@ -1,6 +1,7 @@
 use std::{collections::HashSet, fmt::Debug, rc::Rc, vec};
 
-use crate::lnode::*;
+use crate::{debug, lnode::*};
+use log::info;
 use LNode::*;
 
 /// Structure that defines a Lambda-Graph (see [this](https://arxiv.org/pdf/1907.06101.pdf)).
@@ -105,7 +106,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
 
             // Invariant: canonic is set if it is Some(x) after upgrade.
             if c_n.upgrade().is_none() {
-                self.build_equivalence_class(n)?;
+                let x = self.build_equivalence_class(n);
+                x?
             }
         }
 
@@ -113,9 +115,9 @@ impl<'a, 'b: 'a> LGraph<'a> {
     }
 
     fn build_equivalence_class(&self, c: &Rc<LNode>) -> Result<(), String> {
-        c.set_canonic(Rc::downgrade(&c));
+        c.set_canonic(Rc::downgrade(c));
         c.set_building(true);
-        c.push_queue(&c);
+        c.push_queue(c);
 
         loop {
             let n = c.pop_queue();
@@ -131,7 +133,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 // Se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
                 if m.is_bvar() && m.get_sub().is_some() {
-                    let m_sub = m.get_sub().unwrap().clone();
+                    let m_sub = &m.get_sub().unwrap();
                     let m_parent: Vec<_> = m_sub.get_parent().iter().map(|x| x.upgrade()).collect();
                     parents.extend(m_parent);
                 }
@@ -162,9 +164,10 @@ impl<'a, 'b: 'a> LGraph<'a> {
                         }
                     }
                     Some(c1) => {
-                        if c1 != *c {
-                            return Err(String::from(
-                                "Error: found two representative nodes for the same class.",
+                        let cc = c.clone();
+                        if c1 != cc {
+                            return Err(format!(
+                                "Error: found two representative nodes for the same class. {:?} != {:?} ({0:p} != {1:p})", c1, cc
                             ));
                         }
                     }
@@ -205,7 +208,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
             (Var { .. }, Var { .. }) => (),
             (BVar { .. }, BVar { .. }) => (),
             (BVar { subs_to, .. }, _) => {
-                if let Some(sub) = subs_to.borrow().clone() {
+                if let Some(sub) = &*subs_to.borrow() {
                     return self.enqueue_and_propagate(&sub, c);
                 } else {
                     return Err(String::from(
@@ -216,8 +219,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
             (_, BVar { subs_to, .. }) => {
                 // TODO: Se la prima `BVar` ha una sostituzione, non per forza la sto confrontando con una BVar
                 // Devo quindi effettuare `enqueue_and_propagate` della sostituzione con v.
-                if let Some(sub) = subs_to.borrow().clone() {
-                    return self.enqueue_and_propagate(&sub, m);
+                if let Some(sub) = &*subs_to.borrow() {
+                    return self.enqueue_and_propagate(m, &sub);
                 } else {
                     return Err(String::from(
                         "Error: tried to compare two different kind of nodes.",
@@ -231,7 +234,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
             }
         }
 
-        m.set_canonic(Rc::downgrade(&c));
+        m.set_canonic(Rc::downgrade(c));
         c.push_queue(&m);
 
         Ok(())
@@ -248,8 +251,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 }
                 match (&**v, &*w) {
                     (BVar { binder: b1, .. }, BVar { binder: b2, .. }) => {
-                        let b1 = b1.borrow().clone().upgrade();
-                        let b2 = b2.borrow().clone().upgrade();
+                        let b1 = &b1.borrow().upgrade();
+                        let b2 = &b2.borrow().upgrade();
                         match (&b1, &b2) {
                             // If both bvars have a binder check their canonic form.
                             (Some(b1), Some(b2)) => {

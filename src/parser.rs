@@ -89,7 +89,7 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                 // for example [n: Nat, v: Vec n].
                 let typ = new_scope(ctx, &loc_vars, |ctx| map_term(&term, ctx, path));
                 let vname = path.to_string() + "." + vname;
-                let term = LNode::new_meta_var(Some(typ), Some(vname.as_str()));
+                let term = LNode::new_bvar(Some(typ), Some(vname.as_str()));
 
                 loc_vars.push((vname.to_owned(), term));
             }
@@ -106,9 +106,16 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                     let head = get_head(&term);
                     let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-                    // TODO: create abstraction if `args` are specified.
+                    // create abstraction if `args` are specified.
+                    if !loc_vars.is_empty() {
+                        let rhs = loc_vars.iter().rev().fold(rhs.clone(), |body, (_, bvar)| {
+                            LNode::new_abs(bvar.clone(), body)
+                        });
 
-                    ctx.1.insert(head_ptr, vec![Rewrite(term.clone(), rhs)]);
+                        ctx.1.insert(head_ptr, vec![Rewrite(term.clone(), rhs)]);
+                    } else {
+                        ctx.1.insert(head_ptr, vec![Rewrite(term.clone(), rhs)]);
+                    }
                 }
 
                 ctx.0.insert(name, term);
@@ -117,20 +124,20 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
         Command::Rules(rules) => {
             // Parse rewrite rules.
             let rules: Vec<_> = rules
-                .iter()
+                .into_iter()
                 .map(|rule| parse_rule(rule, ctx, path))
                 .collect();
 
             // Extend already existing rules.
-            rules.iter().for_each(|rule| {
-                let Rewrite(lhs, _) = rule;
-                let head = get_head(&lhs);
+            rules.into_iter().for_each(|rule| {
+                let Rewrite(lhs, _) = &rule;
+                let head = get_head(lhs);
                 let head_ptr = Rc::into_raw(head.clone()) as usize;
 
                 if let Some(rules) = ctx.1.get_mut(&head_ptr) {
-                    rules.push(rule.clone());
+                    rules.push(rule);
                 } else {
-                    ctx.1.insert(head_ptr, vec![rule.clone()]);
+                    ctx.1.insert(head_ptr, vec![rule]);
                 }
             });
         }
@@ -164,7 +171,8 @@ fn parse_intro(
             let ty = map_term(ty, ctx, modpath);
             let tz = map_term(tz, ctx, modpath);
 
-            (Some(ty), Some(tz))
+            // Not considering tz for now.
+            (Some(ty), None)
         }
     }
 }
@@ -232,7 +240,8 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
 
             vars = vec![(name.to_string(), bvar.clone())];
             // Parse body with bvar in scope
-            new_scope(ctx, &vars, |ctx| map_term(body, ctx, modpath))
+            let body = new_scope(ctx, &vars, |ctx| map_term(body, ctx, modpath));
+            LNode::new_abs(bvar, body)
         }
         AppH::Prod(name, typ, body) => {
             // typ is optional, so it may be None
@@ -304,7 +313,8 @@ mod tests {
     #[test]
     fn test_parse() {
         setup();
-        let file_path = "nat.dk";
+        env::set_current_dir("matita-light").expect("Could not set directory");
+        let file_path = "matita_basics_logic.dk";
         let cmds = fs::read_to_string(file_path);
         assert!(cmds.is_ok(), "Error reading file");
         let cmds = cmds.unwrap();
@@ -314,7 +324,7 @@ mod tests {
         let parse: Vec<_> = Strict::<_, Symb<String>, String>::new(&cmds).collect();
         // let parse = parse.unwrap();
 
-        parse.iter().for_each(|x| println!("{:?}", x))
+        parse.iter().for_each(|x| println!("{:#?}", x))
     }
 
     #[test]
@@ -353,7 +363,7 @@ mod tests {
     fn test_focalide() {
         setup();
         env::set_current_dir("focalide").expect("Could not set directory");
-        let file_path = "additive_law.dk";
+        let file_path = "zen.dk";
 
         let _ = parse(file_path);
     }
@@ -364,6 +374,13 @@ mod tests {
         env::set_current_dir("matita-light").expect("Could not set directory");
         let file_path = "matita_basics_logic.dk";
 
-        let _ = parse(file_path);
+        let ctx = parse(file_path);
+
+        let term = ctx.0.get("matita_basics_logic.eq_rect_r").unwrap();
+        let head = get_head(term);
+        let head_ptr = Rc::into_raw(head.clone()) as usize;
+
+        let rule = ctx.1.get(&head_ptr).unwrap();
+        println!("{:#?}", rule);
     }
 }
