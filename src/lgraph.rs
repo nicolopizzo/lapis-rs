@@ -91,7 +91,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
         self.nodes
             .iter()
             .map(|x| *x)
-            .filter(|x| x.is_bvar() || x.is_var())
+            .filter(|x| x.is_bvar())
             .collect()
     }
 
@@ -106,8 +106,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
 
             // Invariant: canonic is set if it is Some(x) after upgrade.
             if c_n.upgrade().is_none() {
-                let x = self.build_equivalence_class(n);
-                x?
+                self.build_equivalence_class(n)?;
             }
         }
 
@@ -152,6 +151,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
                     }
                 }
             }
+
+            // FIXME: possibile fix: devo andare sui binder...?
 
             // For every ~neighbour m of n ...
             for m in n.undir().iter() {
@@ -206,21 +207,37 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 r2.add_undir(&r1);
             }
             (Var { .. }, Var { .. }) => (),
-            (BVar { .. }, BVar { .. }) => (),
-            (BVar { subs_to, .. }, _) => {
-                if let Some(sub) = &*subs_to.borrow() {
+            (BVar { .. }, BVar { .. }) => {}
+            (
+                BVar {
+                    subs_to, is_meta, ..
+                },
+                _,
+            ) => {
+                let sub = &mut *subs_to.borrow_mut();
+                if let Some(sub) = sub {
                     return self.enqueue_and_propagate(&sub, c);
+                } else if *is_meta {
+                    *sub = Some(c.clone());
                 } else {
                     return Err(String::from(
                         "Error: tried to compare two different kind of nodes.",
                     ));
                 }
             }
-            (_, BVar { subs_to, .. }) => {
+            (
+                _,
+                BVar {
+                    subs_to, is_meta, ..
+                },
+            ) => {
                 // TODO: Se la prima `BVar` ha una sostituzione, non per forza la sto confrontando con una BVar
                 // Devo quindi effettuare `enqueue_and_propagate` della sostituzione con v.
-                if let Some(sub) = &*subs_to.borrow() {
+                let sub = &mut *subs_to.borrow_mut();
+                if let Some(sub) = sub {
                     return self.enqueue_and_propagate(m, &sub);
+                } else if *is_meta {
+                    *sub = Some(m.clone());
                 } else {
                     return Err(String::from(
                         "Error: tried to compare two different kind of nodes.",
@@ -228,8 +245,9 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 }
             }
             (_, _) => {
-                return Err(String::from(
-                    "Error: tried to compare two different kind of nodes.",
+                return Err(format!(
+                    "Error: tried to compare two different kind of nodes. {:?} <=> {:?}",
+                    m, c
                 ));
             }
         }
@@ -261,6 +279,13 @@ impl<'a, 'b: 'a> LGraph<'a> {
 
                                 // If the found canonic do not match, the var_check fails.
                                 if canonic_b1 != canonic_b2 {
+                                    // FIXME: Confronto tra prod e abs va a finire molto male.
+                                    // if (b1.is_prod() && b2.is_abs())
+                                        // || (b1.is_abs() && b2.is_prod())
+                                    // {
+                                        // return true;
+                                    // }
+
                                     return false;
                                 }
                             }

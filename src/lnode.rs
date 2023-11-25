@@ -1,7 +1,7 @@
 use std::{
     borrow::BorrowMut,
     cell::RefCell,
-    collections::VecDeque,
+    collections::{VecDeque, HashMap},
     fmt::{Debug, Write},
     hash::Hash,
     rc::{Rc, Weak},
@@ -9,6 +9,8 @@ use std::{
 
 use log::info;
 use LNode::*;
+
+use crate::{parser::Rewrite, utils::{deep_clone, get_head, matches}};
 
 #[derive(Clone)]
 pub struct NormalForms(pub bool, pub Option<Rc<LNode>>);
@@ -109,7 +111,6 @@ impl Debug for LNode {
                 } else {
                     left.fmt(f)?;
                 }
-                // f.write_str(")")?;
                 f.write_str(" ")?;
                 // If on the right I have a substituted bvar, I check the substitution for pretty
                 // printing (if I have something other than variables, open parentheses).
@@ -143,9 +144,9 @@ impl Debug for LNode {
             }
             BVar { subs_to, symb, .. } => {
                 if let Some(sub) = &*subs_to.borrow() {
-                    // f.write_str("[")?;
-                    sub.fmt(f)
-                    // f.write_str("]")
+                    f.write_str("[")?;
+                    sub.fmt(f)?;
+                    f.write_str("]")
                 } else if let Some(symb) = symb {
                     f.write_str(&symb)
                 } else {
@@ -199,6 +200,22 @@ impl LNode {
         right.add_parent(app.clone());
 
         app
+    }
+
+    pub fn new_prod_unbound(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
+        let prod = Rc::new(Prod {
+            bvar: bvar.clone(),
+            body: body.clone(),
+            parent: RefCell::new(Vec::new()),
+            undir: RefCell::new(Vec::new()),
+            canonic: RefCell::new(Weak::new()),
+            building: RefCell::new(false),
+            queue: RefCell::new(Vec::new().into()),
+        });
+
+        body.add_parent(prod.clone());
+
+        prod
     }
 
     pub fn new_prod(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
@@ -320,7 +337,8 @@ impl LNode {
         self.set_canonic(Weak::new());
         self.set_building(false);
         self.reset_undir();
-        *self.queue().borrow_mut() = VecDeque::new();
+        self.reset_queue();
+        // *self.queue().borrow_mut() = VecDeque::new();
     }
 
     pub(crate) fn undir(&self) -> Vec<Weak<Self>> {
@@ -470,12 +488,12 @@ impl LNode {
     }
 
     /// Binds a `BVar` node to an `Abs` node.
-    pub(crate) fn bind_to(&self, abs: Rc<LNode>) {
-        if !self.is_bvar() || abs.is_abs() {
+    pub(crate) fn bind_to(&self, binder: Rc<LNode>) {
+        if !self.is_bvar() || binder.is_abs() {
             // TODO: fail
         }
 
-        let abs = Rc::downgrade(&abs);
+        let abs = Rc::downgrade(&binder);
         match &*self {
             BVar { binder, .. } => *binder.borrow_mut() = abs,
             _ => (),
@@ -528,4 +546,109 @@ impl LNode {
             _ => None,
         }
     }
+}
+
+
+pub fn snf(term: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
+    let term = weak_head(term, rules);
+    match &*term {
+        LNode::Prod { bvar, body, .. } => {
+            let bvar = snf(bvar, rules);
+            let body = snf(body, rules);
+            LNode::new_prod(bvar, body)
+        }
+        LNode::Abs { bvar, body, .. } => {
+            let bvar = snf(bvar, rules);
+            let body = snf(body, rules);
+            LNode::new_abs(bvar, body)
+        }
+        LNode::App { left, right, .. } => {
+            let left = snf(left, rules);
+            let right = snf(right, rules);
+            LNode::new_app(left, right)
+        }
+        LNode::BVar {
+            subs_to,
+            normal_forms,
+            ..
+        } if subs_to.borrow().is_some() => {
+            let subs_to = subs_to.borrow().clone().unwrap();
+            // TODO: Verifico che ci sia una snf: nel caso in cui c'è la restituisco, altrimenti la
+            // calcolo e la salvo.
+            let NormalForms(wnf_computed, computed_snf) = normal_forms.borrow().clone();
+            if let Some(snf) = computed_snf {
+                snf
+            } else {
+                let snf_term = snf(&subs_to, rules);
+                *normal_forms.borrow_mut() = NormalForms(wnf_computed, Some(snf_term.clone()));
+
+                snf_term
+            }
+        }
+        LNode::BVar { ty, .. } => {
+            let ty_b = ty.borrow().clone();
+            let ty_b = ty_b.map(|ty| snf(&ty, rules));
+            *ty.borrow_mut() = ty_b;
+
+            term
+        }
+        _ => term,
+    }
+}
+
+pub fn weak_head(node: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> Rc<LNode> {
+    let wnf = match &**node {
+        LNode::App { left, right, .. } => {
+            // Recursively weaken the head of the application.
+            let left = weak_head(left, rules);
+            let left = deep_clone(&mut HashMap::new(), &left);
+
+            if let LNode::Abs { bvar, body, .. } = &*left {
+                bvar.subs_to(&right);
+                weak_head(body, rules)
+            } else {
+                // Sono già in normal form.
+                let right = weak_head(right, rules);
+                LNode::new_app(left, right)
+            }
+        }
+        LNode::BVar {
+            subs_to,
+            normal_forms,
+            ..
+        } if subs_to.borrow().is_some() => {
+            let NormalForms(wnf_computed, snf) = normal_forms.borrow().clone();
+            if wnf_computed {
+                subs_to.borrow().clone().unwrap()
+            } else {
+                let subs = subs_to.borrow().clone().unwrap();
+                let wnf = weak_head(&subs, rules);
+                *normal_forms.borrow_mut() = NormalForms(true, snf);
+                *subs_to.borrow_mut() = Some(wnf.clone());
+                wnf
+            }
+        }
+        _ => node.clone(),
+    };
+
+    let head = get_head(&wnf);
+    let head_ptr = Rc::into_raw(head.clone()) as usize;
+
+    // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
+    // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
+    let rew = rules.get(&head_ptr);
+    if let Some(rew) = rew {
+        for Rewrite(lhs, rhs) in rew {
+            let mut subs = HashMap::new();
+            let lhs = deep_clone(&mut subs, &lhs);
+            let rhs = deep_clone(&mut subs, &rhs);
+
+            // Mi mantengo un campo booleano per le metavariabili
+            if matches(&wnf, &lhs, rules) {
+                return weak_head(&rhs, rules);
+            }
+        }
+    }
+
+    wnf
 }

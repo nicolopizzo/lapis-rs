@@ -247,10 +247,10 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
             // typ is optional, so it may be None
             let typ = Some(map_term(&typ, ctx, modpath));
             let name = name.as_deref();
-            let bvar = LNode::new_bvar(typ, name);
+            let name = name.map(|name| modpath.to_string() + "." + name);
+            let bvar = LNode::new_bvar(typ, name.as_deref());
 
             let body = if let Some(name) = name {
-                let name = modpath.to_string() + "." + name;
                 vars = vec![((name.to_string(), bvar.clone()))];
                 // Named product
                 new_scope(ctx, &vars, |ctx| map_term(body, ctx, modpath))
