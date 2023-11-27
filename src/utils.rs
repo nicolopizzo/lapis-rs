@@ -168,32 +168,32 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
 
                 true
             } else {
-                match tterm {
-                    LNode::BVar {
-                        binder: t_binder, ..
-                    } => {
-                        // Problema: `term` può essere una meta-variabile.
-                        // invariante: il binder deve essere stato reso uguale in precedenza.
-                        let c1 = t_binder.borrow().upgrade();
-                        if c1.is_none() {
-                            return false;
-                        }
-                        let c1 = c1.expect("BVar has not a binder").canonic().upgrade();
-
-                        let c2 = p_binder.borrow().upgrade();
-                        // .expect("BVar has not a binder")
-                        // .canonic()
-                        // .upgrade();
-
-                        if c2.is_none() {
-                            // Ci finisce
-                            // return false;
-                            // println!("ERROR, {:?}", p_binder.borrow().upgrade());
-                        }
-
-                        c1 == c2
+                if let LNode::BVar {
+                    binder: tbinder, ..
+                } = tterm
+                {
+                    // Problema: `term` può essere una meta-variabile.
+                    // invariante: il binder deve essere stato reso uguale in precedenza.
+                    let c1 = t_binder.borrow().upgrade();
+                    if c1.is_none() {
+                        return false;
                     }
-                    _ => false,
+                    let c1 = c1.expect("BVar has not a binder").canonic().upgrade();
+
+                    let c2 = p_binder.borrow().upgrade();
+                    // .expect("BVar has not a binder")
+                    // .canonic()
+                    // .upgrade();
+
+                    if c2.is_none() {
+                        // Ci finisce
+                        // return false;
+                        // println!("ERROR, {:?}", p_binder.borrow().upgrade());
+                    }
+
+                    c1 == c2
+                } else {
+                    false
                 }
             }
         }
