@@ -58,26 +58,28 @@ fn parse_file(filepath: &str, ctx: &mut Context) {
         .strip_suffix(".dk")
         .expect("You can only read .dk files.");
 
+    OPEN_FILES.lock().unwrap().insert(String::from(path));
+
     // let parse: result::Result<Vec<_>, _> =
     // Strict::<_, Symb<String>, String>::new(&cmds).collect();
     let cmds: result::Result<Vec<_>, _> =
         Lazy::<_, Symb<String>, String>::new(cmds.lines()).collect();
     let cmds = cmds.unwrap();
 
-    let bar = ProgressBar::new(cmds.len() as u64);
-    let sty =
-        ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
-            .unwrap()
-            .progress_chars("==-");
-    bar.set_style(sty);
-    bar.set_message("Parsing...");
-    bar.tick();
+    // let bar = ProgressBar::new(cmds.len() as u64);
+    // let sty =
+        // ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
+            // .unwrap()
+            // .progress_chars("==-");
+    // bar.set_style(sty);
+    // bar.set_message("Parsing...");
+    // bar.tick();
 
     for cmd in cmds {
-        bar.inc(1);
+        // bar.inc(1);
         parse_command(&cmd, path, ctx);
     }
-    bar.finish_with_message("Parsing completed.");
+    // bar.finish_with_message("Parsing completed.");
 }
 
 fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
