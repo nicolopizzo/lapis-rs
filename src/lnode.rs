@@ -600,6 +600,13 @@ impl LNode {
             _ => (),
         }
     }
+
+    pub fn is_meta(&self) -> bool {
+        match self {
+            LNode::BVar { is_meta, .. } => *is_meta,
+            _ => false,
+        }
+    }
 }
 
 pub fn snf(term: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
@@ -667,16 +674,21 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
             subs_to,
             normal_forms,
             ..
-        } if subs_to.borrow().is_some() => {
-            let NormalForms(wnf_computed, snf) = normal_forms.borrow().clone();
-            if wnf_computed {
-                subs_to.borrow().clone().unwrap()
-            } else {
-                let subs = subs_to.borrow().clone().unwrap();
-                let wnf = weak_head(&subs, rules);
-                *normal_forms.borrow_mut() = NormalForms(true, snf);
-                *subs_to.borrow_mut() = Some(wnf.clone());
-                wnf
+        } => {
+            let subs = &mut *subs_to.borrow_mut();
+            match subs {
+                Some(sub) => {
+                    let NormalForms(wnf_computed, snf) = normal_forms.borrow().clone();
+                    if wnf_computed {
+                        sub.clone()
+                    } else {
+                        let wnf = weak_head(&sub, rules);
+                        *normal_forms.borrow_mut() = NormalForms(true, snf);
+                        *subs = Some(wnf.clone());
+                        wnf
+                    }
+                }
+                None => node.clone(),
             }
         }
         _ => node.clone(),
@@ -690,7 +702,7 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Option<Rc<LNode>> {
     let size = wnf.size();
     let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-    // TODO: Usare una mappa ((testam, nargs) -> Regola)
+    // TODO: Usare una mappa ((testa, arietà) -> Regola)
     let key = (head_ptr, size);
 
     // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
@@ -703,7 +715,7 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Option<Rc<LNode>> {
             let rhs = deep_clone(&mut subs, &rhs);
 
             // Mi mantengo un campo booleano per le metavariabili
-            if matches(&wnf, &lhs, rules){
+            if matches(&wnf, &lhs, rules) {
                 return Some(weak_head(&rhs, rules));
             }
         }
