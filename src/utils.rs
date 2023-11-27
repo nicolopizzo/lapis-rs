@@ -174,7 +174,7 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
                 {
                     // Problema: `term` può essere una meta-variabile.
                     // invariante: il binder deve essere stato reso uguale in precedenza.
-                    let c1 = t_binder.borrow().upgrade();
+                    let c1 = tbinder.borrow().upgrade();
                     if c1.is_none() {
                         return false;
                     }
