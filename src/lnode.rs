@@ -565,6 +565,27 @@ impl LNode {
         }
     }
 
+    pub fn unsub_meta(&self) {
+        match self {
+            BVar {
+                subs_to, is_meta, ..
+            } => {
+                if *is_meta {
+                    *subs_to.borrow_mut() = None;
+                }
+            }
+            App { left, right, .. } => {
+                left.unsub();
+                right.unsub()
+            }
+            Prod { bvar, body, .. } | Abs { bvar, body, .. } => {
+                bvar.unsub();
+                body.unsub()
+            }
+
+            _ => (),
+        }
+    }
     pub fn get_sub(&self) -> Option<Rc<Self>> {
         match self {
             BVar { subs_to, .. } => subs_to.borrow().clone(),

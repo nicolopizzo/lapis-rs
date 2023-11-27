@@ -74,6 +74,9 @@ fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()
         }
     }
 
+    lhs.unsub_meta();
+    rhs.unsub_meta();
+
     Ok(())
 }
 
