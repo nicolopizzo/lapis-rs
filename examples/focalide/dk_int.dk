@@ -98,7 +98,7 @@ def mod : I -> I -> I.
 
 def quo : I -> I -> I.
 
-[p: I, m: I]
+[p, m]
   quo (make m (builtins.0)) (make p (builtins.0))
   -->
   make (dk_nat.quo m p) builtins.0.
