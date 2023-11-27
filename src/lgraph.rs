@@ -173,8 +173,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
         match (&**m, &**c) {
             (Prod { body: b1, .. }, Prod { body: b2, .. })
             | (Abs { body: b1, .. }, Abs { body: b2, .. }) => {
-                b1.add_undir(&b2);
-                b2.add_undir(&b1);
+                b1.add_undir(b2);
+                b2.add_undir(b1);
             }
             (
                 App {
@@ -188,11 +188,11 @@ impl<'a, 'b: 'a> LGraph<'a> {
                     ..
                 },
             ) => {
-                l1.add_undir(&l2);
-                l2.add_undir(&l1);
+                l1.add_undir(l2);
+                l2.add_undir(l1);
 
-                r1.add_undir(&r2);
-                r2.add_undir(&r1);
+                r1.add_undir(r2);
+                r2.add_undir(r1);
             }
             (Var { .. }, Var { .. }) => (),
             (BVar { .. }, BVar { .. }) => {}
@@ -241,7 +241,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
         }
 
         m.set_canonic(Rc::downgrade(c));
-        c.push_queue(&m);
+        c.push_queue(m);
 
         Ok(())
     }
