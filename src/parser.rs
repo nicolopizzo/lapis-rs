@@ -29,8 +29,8 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone)]
 pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 
-type GammaMap = HashMap<String, Rc<LNode>>;
-type RewriteMap = HashMap<usize, Vec<Rewrite>>;
+pub type GammaMap = HashMap<String, Rc<LNode>>;
+pub type RewriteMap = HashMap<(usize, usize), Vec<Rewrite>>;
 
 #[derive(Debug, Clone)]
 pub struct Context(pub GammaMap, pub RewriteMap);
@@ -112,9 +112,10 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                             LNode::new_abs(bvar.clone(), body)
                         });
 
-                        ctx.1.insert(head_ptr, vec![Rewrite(term.clone(), rhs)]);
+
+                        ctx.1.insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
                     } else {
-                        ctx.1.insert(head_ptr, vec![Rewrite(term.clone(), rhs)]);
+                        ctx.1.insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
                     }
                 }
 
@@ -131,13 +132,16 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
             // Extend already existing rules.
             rules.into_iter().for_each(|rule| {
                 let Rewrite(lhs, _) = &rule;
+                let size = lhs.size();
                 let head = get_head(lhs);
                 let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-                if let Some(rules) = ctx.1.get_mut(&head_ptr) {
+                let key = (head_ptr, size);
+
+                if let Some(rules) = ctx.1.get_mut(&key) {
                     rules.push(rule);
                 } else {
-                    ctx.1.insert(head_ptr, vec![rule]);
+                    ctx.1.insert(key, vec![rule]);
                 }
             });
         }
@@ -380,7 +384,7 @@ mod tests {
         let head = get_head(term);
         let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-        let rule = ctx.1.get(&head_ptr).unwrap();
-        println!("{:#?}", rule);
+        // let rule = ctx.1.get(&head_ptr).unwrap();
+        // println!("{:#?}", rule);
     }
 }

@@ -1,14 +1,17 @@
-use std::{rc::Rc, collections::HashMap};
+use std::{collections::HashMap, rc::Rc};
 
-use crate::{lnode::{LNode, weak_head}, parser::Rewrite};
+use crate::{
+    lnode::{weak_head, LNode},
+    parser::{Rewrite, RewriteMap},
+};
 
 #[macro_export]
 macro_rules! debug {
     ( $fun: expr ) => {{
         info!(target: "FOLDING", "{{{{{{");
-        unsafe { OPEN_DEBUG += 1 }
+        // unsafe { OPEN_DEBUG += 1 }
         let res = $fun;
-        unsafe { OPEN_DEBUG -= 1 }
+        // unsafe { OPEN_DEBUG -= 1 }
         info!(target: "FOLDING", "}}}}}}");
         res
     }};
@@ -16,9 +19,9 @@ macro_rules! debug {
 
     ( $fun: expr, $target: expr ) => {{
         info!(target: $target, "{{{{{{");
-        unsafe { OPEN_DEBUG += 1 }
+        // unsafe { OPEN_DEBUG += 1 }
         let res = $fun;
-        unsafe { OPEN_DEBUG -= 1 }
+        // unsafe { OPEN_DEBUG -= 1 }
         info!(target: $target, "}}}}}}");
         res
     }};
@@ -87,6 +90,7 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
                     if *is_meta {
                         LNode::new_meta_var(ty, symb)
                     } else {
+                        // Must share bvar???
                         LNode::new_bvar(ty, symb)
                     }
                 }
@@ -104,7 +108,7 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
 /// Verifies that `term` matches `lhs` up to weakening.
 /// `pattern` is the left hand side of a rewrite rule, so it can only be `{ App, Var, BVar, Abs }`.
 /// `term` must be in whnf.
-pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec<Rewrite>>) -> bool {
+pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> bool {
     match (&**term, &**pattern) {
         (
             LNode::App {
@@ -136,24 +140,22 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec
          *    .canonic() i binder.
          * */
         (LNode::BVar { subs_to, .. }, _) if subs_to.borrow().is_some() => {
-            let subs = subs_to.borrow().clone().unwrap();
-            matches(&subs, pattern, rules)
+            match &*subs_to.borrow() {
+                Some(subs) => matches(subs, pattern, rules),
+                None => unreachable!(),
+            }
         }
-        (
-            _,
-            LNode::BVar {
-                subs_to, is_meta, ..
-            },
-        ) if subs_to.borrow().is_some() && !*is_meta => {
-            let subs = subs_to.borrow().clone().unwrap();
-            matches(term, &subs, rules)
+        (_, LNode::BVar { subs_to, .. }) if subs_to.borrow().is_some() => {
+            match &*subs_to.borrow() {
+                Some(subs) => matches(term, subs, rules),
+                None => unreachable!(),
+            }
         }
         (
             tterm,
             LNode::BVar {
                 subs_to,
                 is_meta,
-                canonic,
                 binder: p_binder,
                 ..
             },
@@ -173,22 +175,19 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &HashMap<usize, Vec
                         // invariante: il binder deve essere stato reso uguale in precedenza.
                         let c1 = t_binder.borrow().upgrade();
                         if c1.is_none() {
-                            // println!("{:?} ?= {:?}", term, pattern);
-
                             return false;
                         }
                         let c1 = c1.expect("BVar has not a binder").canonic().upgrade();
-                        // println!("{:?}", pattern);
-                        let c2 = p_binder
-                            .borrow()
-                            .upgrade()
-                            .expect("BVar has not a binder")
-                            .canonic()
-                            .upgrade();
+
+                        let c2 = p_binder.borrow().upgrade();
+                        // .expect("BVar has not a binder")
+                        // .canonic()
+                        // .upgrade();
 
                         if c2.is_none() {
                             // Ci finisce
-                            // println!("ERROR::UNIF????");
+                            // return false;
+                            // println!("ERROR, {:?}", p_binder.borrow().upgrade());
                         }
 
                         c1 == c2

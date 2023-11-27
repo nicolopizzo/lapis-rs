@@ -33,50 +33,37 @@ impl<'a, 'b: 'a> LGraph<'a> {
         Self { nodes }
     }
 
+    fn rec_insert(
+        term: &'b Rc<LNode>,
+        ptrs: &mut HashSet<usize>,
+        nodes: &mut HashSet<&'a Rc<LNode>>,
+    ) {
+        let left_ptr = Rc::into_raw(term.clone()) as usize;
+        if !ptrs.contains(&left_ptr) {
+            ptrs.insert(left_ptr);
+            nodes.insert(term);
+            Self::rec_from(nodes, ptrs, term);
+        }
+    }
+
     fn rec_from(
         nodes: &mut HashSet<&'a Rc<LNode>>,
         ptrs: &mut HashSet<usize>,
         node: &'b Rc<LNode>,
     ) {
-        let ptr = Rc::into_raw(node.clone()) as usize;
-        if !ptrs.contains(&ptr) {
-            ptrs.insert(ptr);
-            nodes.insert(node);
-        }
+        Self::rec_insert(node, ptrs, nodes);
 
         // Resettare il nodo.
         node.reset();
 
         match &**node {
             App { left, right, .. } => {
-                let left_ptr = Rc::into_raw(left.clone()) as usize;
-                if !ptrs.contains(&left_ptr) {
-                    ptrs.insert(left_ptr);
-                    nodes.insert(left);
-                    Self::rec_from(nodes, ptrs, left);
-                }
-
-                let right_ptr = Rc::into_raw(right.clone()) as usize;
-                if !ptrs.contains(&right_ptr) {
-                    ptrs.insert(right_ptr);
-                    nodes.insert(right);
-                    Self::rec_from(nodes, ptrs, right);
-                }
+                Self::rec_insert(left, ptrs, nodes);
+                Self::rec_insert(right, ptrs, nodes);
             }
             Prod { bvar, body, .. } | Abs { bvar, body, .. } => {
-                let bvar_ptr = Rc::into_raw(bvar.clone()) as usize;
-                if !ptrs.contains(&bvar_ptr) {
-                    ptrs.insert(bvar_ptr);
-                    nodes.insert(bvar);
-                    Self::rec_from(nodes, ptrs, bvar);
-                }
-
-                let body_ptr = Rc::into_raw(body.clone()) as usize;
-                if !ptrs.contains(&body_ptr) {
-                    ptrs.insert(body_ptr);
-                    nodes.insert(body);
-                    Self::rec_from(nodes, ptrs, body);
-                }
+                Self::rec_insert(bvar, ptrs, nodes);
+                Self::rec_insert(body, ptrs, nodes);
             }
             _ => (),
         }
@@ -91,7 +78,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
         self.nodes
             .iter()
             .map(|x| *x)
-            .filter(|x| x.is_bvar())
+            .filter(|x| x.is_bvar() || x.is_var())
             .collect()
     }
 
@@ -107,6 +94,9 @@ impl<'a, 'b: 'a> LGraph<'a> {
             // Invariant: canonic is set if it is Some(x) after upgrade.
             if c_n.upgrade().is_none() {
                 self.build_equivalence_class(n)?;
+
+                // let c_n = n.canonic().upgrade().clone().unwrap();
+            } else {
             }
         }
 
@@ -279,18 +269,15 @@ impl<'a, 'b: 'a> LGraph<'a> {
 
                                 // If the found canonic do not match, the var_check fails.
                                 if canonic_b1 != canonic_b2 {
-                                    // FIXME: Confronto tra prod e abs va a finire molto male.
-                                    // if (b1.is_prod() && b2.is_abs())
-                                        // || (b1.is_abs() && b2.is_prod())
-                                    // {
-                                        // return true;
-                                    // }
-
                                     return false;
                                 }
                             }
 
-                            _ => (),
+                            (None, None) => (),
+                            _ => {
+                                println!("{:?}, {:?}", b1, b2);
+                                return false;
+                            }
                         }
                     }
 
