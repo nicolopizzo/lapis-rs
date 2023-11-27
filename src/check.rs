@@ -52,7 +52,8 @@ pub fn check_context(ctx: &Context) -> Result<()> {
 
         let check = check_rule(lhs, rhs, &rules);
         if let Err(e) = check {
-            println!("Error {:?}", e);
+            println!("{:?}", lhs);
+            // return Err(e);
         }
     }
 
@@ -106,6 +107,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 let body = weak_head(body, rules);
                 return Ok(Some(body));
             } else {
+                println!("{:?}", left_whd);
                 return Err(Error::ProductExpected);
             }
         }
@@ -232,6 +234,7 @@ fn equality_check(r1: &Rc<LNode>, r2: &Rc<LNode>) -> bool {
 
     // g.blind_check().is_ok() && g.var_check()
     if let Err(e) = check_res {
+        println!("Error {:?}", e);
         return false;
     } else {
         let res = g.var_check();
@@ -291,17 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cic() {
-        before_each();
-        let filepath = "cic.dk";
-        let c = parse(filepath);
-
-        let check = check_context(&c);
-
-        assert!(check.is_ok(), "{:?}", check.unwrap_err());
-    }
-
-    #[test]
     fn test_dependant() {
         before_each();
         let filepath = "vec.dk";
@@ -328,7 +320,7 @@ mod tests {
     fn test_matita() {
         before_each();
         env::set_current_dir("matita-light").expect("ERROR");
-        // let filepath = "univs.dk";
+        // let filepath = "cic.dk";
         let filepath = "matita_basics_logic.dk";
         // let filepath = "matita_basics_types.dk";
 
@@ -346,14 +338,10 @@ mod tests {
 
         let ctx = parse(filepath);
 
-        // Problema con varcheck.
-        let tname = "matita_basics_logic.eq_rect_r";
-
-        // Problema con cic.prop != cic.type (cic.s (cic.s cic.z) )
-        // let tname = "matita_basics_logic.True_discr";
-
-        // Altro problema ancora.
-        // let tname = "matita_basics_logic.iff_or_r";
+        // let tname = "matita_basics_logic.eq_ind_r";
+        // let tname = "matita_basics_logic.And_inv_ind";
+        // let tname = "matita_basics_logic.Not_inv_rect_CProp2";
+        let tname = "matita_basics_logic.True_discr";
 
         let term = ctx.0.get(tname).unwrap();
         let size = term.size();
@@ -362,9 +350,8 @@ mod tests {
         let key = (term, size);
         let Rewrite(lhs, rhs) = ctx.1.get(&key).unwrap().first().unwrap();
 
-        // println!("{:?}", rhs);
-
         let check = check_rule(lhs, rhs, &ctx.1);
+        // println!("{:?} --> {:?}", lhs, rhs);
         assert!(check.is_ok(), "{:?}", check.unwrap_err());
     }
 

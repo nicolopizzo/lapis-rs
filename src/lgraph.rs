@@ -94,8 +94,6 @@ impl<'a, 'b: 'a> LGraph<'a> {
             // Invariant: canonic is set if it is Some(x) after upgrade.
             if c_n.upgrade().is_none() {
                 self.build_equivalence_class(n)?;
-
-                // let c_n = n.canonic().upgrade().clone().unwrap();
             } else {
             }
         }
@@ -275,7 +273,6 @@ impl<'a, 'b: 'a> LGraph<'a> {
 
                             (None, None) => (),
                             _ => {
-                                println!("{:?}, {:?}", b1, b2);
                                 return false;
                             }
                         }

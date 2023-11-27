@@ -145,6 +145,7 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
                 None => unreachable!(),
             }
         }
+
         (_, LNode::BVar { subs_to, .. }) if subs_to.borrow().is_some() => {
             match &*subs_to.borrow() {
                 Some(subs) => matches(term, subs, rules),

@@ -172,10 +172,10 @@ fn parse_intro(
 
             (ty, rhs)
         }
-        Intro::Theorem(ty, tz) => {
+        Intro::Theorem(ty, _tz) => {
             // TODO: check if Ty is equal to Tz
             let ty = map_term(ty, ctx, modpath);
-            let tz = map_term(tz, ctx, modpath);
+            // let tz = map_term(tz, ctx, modpath);
 
             // Not considering tz for now.
             (Some(ty), None)
@@ -268,6 +268,12 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
             LNode::new_prod(bvar, body)
         }
     };
+
+    // se gli argomenti ci Sono e la testa è una metavar
+    if !args.is_empty() && head.is_meta() {
+        // println!("{:?}", head);
+        // panic!("ERRORE HIGHER ORDER");
+    }
 
     // Apply args to head function.
     args.iter().fold(head.clone(), |acc, term| {
@@ -386,7 +392,7 @@ mod tests {
         let head = get_head(term);
         let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-        // let rule = ctx.1.get(&head_ptr).unwrap();
-        // println!("{:#?}", rule);
+        let rule = ctx.1.get(&(head_ptr, 1)).unwrap();
+        println!("{:#?}", rule);
     }
 }
