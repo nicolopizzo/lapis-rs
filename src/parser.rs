@@ -139,6 +139,7 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                 let head_ptr = Rc::into_raw(head.clone()) as usize;
 
                 let key = (head_ptr, size);
+                // println!("Inserting {:?}, {:?}", head, size);
 
                 if let Some(rules) = ctx.1.get_mut(&key) {
                     rules.push(rule);

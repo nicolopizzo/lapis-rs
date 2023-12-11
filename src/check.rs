@@ -1,13 +1,17 @@
 #![allow(unused_variables)]
 use core::panic;
 use std::{
+    alloc::System,
     borrow::BorrowMut,
     collections::HashMap,
     fmt::format,
+    fs::{File, OpenOptions},
     hash::Hash,
     rc::{self, Rc},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use deepsize::DeepSizeOf;
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::__Deref;
 use log::{error, info, warn};
@@ -34,7 +38,6 @@ static mut OPEN_DEBUG: usize = 0;
 
 pub fn check_context(ctx: &Context) -> Result<()> {
     let Context(gamma, rules) = ctx;
-    // TODO: check definitions in gamma.
     let to_check = rules.iter().map(|(_, x)| x).flatten().collect::<Vec<_>>();
 
     let bar = ProgressBar::new(to_check.len() as u64);
@@ -48,11 +51,12 @@ pub fn check_context(ctx: &Context) -> Result<()> {
     for Rewrite(lhs, rhs) in &to_check {
         bar.inc(1);
 
-        // check_rule(lhs, rhs, &rules)?;
+        // For debug purposes.
+        // File::create("../../log/output.log").unwrap();
 
-        let check = check_rule(lhs, rhs, &rules);
+        let check = check_rule(&lhs, &rhs, &rules);
         if let Err(e) = check {
-            println!("{:?}", lhs);
+            println!("Couldn't check {:?}", lhs);
             // return Err(e);
         }
     }
@@ -63,10 +67,13 @@ pub fn check_context(ctx: &Context) -> Result<()> {
 }
 
 fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()> {
-    let lhs_typ = type_infer(lhs, rules)?;
+    info!("Inferring type for {:?}", lhs);
+    let lhs_typ = debug!(type_infer(lhs, rules))?;
     if let Some(lhs_typ) = lhs_typ {
+        info!("Inferred type: {:?}", lhs_typ);
         type_check(rhs, &lhs_typ, rules)?;
     } else {
+        lhs.unsub_meta();
         let rhs_typ = type_infer(rhs, rules)?;
         if let Some(rhs_typ) = rhs_typ {
             type_check(lhs, &rhs_typ, rules)?;
@@ -89,14 +96,14 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 return Ok(None);
             }
 
-            let left_whd = left_ty.unwrap();
+            let left_ty_whd = left_ty.unwrap();
 
-            let left_whd = weak_head(&left_whd, rules);
+            let left_ty_whd = weak_head(&left_ty_whd, rules);
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
-            let left_whd = deep_clone(&mut HashMap::new(), &left_whd);
+            let left_ty_whd = deep_clone(&mut HashMap::new(), &left_ty_whd);
 
-            if let LNode::Prod { bvar, body, .. } = &*left_whd {
+            if let LNode::Prod { bvar, body, .. } = &*left_ty_whd {
                 // check equality between left and `right_ty`
                 let bvar_ty = bvar.get_type().expect("BVar must be typed in Product");
                 type_check(right, &bvar_ty, rules)?;
@@ -107,12 +114,13 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 let body = weak_head(body, rules);
                 return Ok(Some(body));
             } else {
-                println!("{:?}", left_whd);
+                println!("{:?}", left_ty_whd);
                 return Err(Error::ProductExpected);
             }
         }
         LNode::Abs { bvar, body, .. } => {
-            let bvar_ty = type_infer(bvar, rules)?;
+            // let bvar_ty = type_infer(bvar, rules)?;
+            let bvar_ty = bvar.get_type();
             if bvar_ty.is_none() {
                 return Ok(None);
             }
@@ -135,9 +143,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             let prod = LNode::new_prod(xnew, body_ty);
             Ok(Some(prod))
         }
-        LNode::BVar { ty, .. } | LNode::Var { ty, .. } => {
-            Ok(ty.borrow().clone())
-        }
+        LNode::BVar { ty, .. } | LNode::Var { ty, .. } => Ok(ty.borrow().clone()),
         LNode::Prod { bvar, body, .. } => {
             let bvar_ty = bvar.get_type().expect("Variable is not typed.");
             check_typeof(&bvar_ty, |node| node.is_type(), rules)?;
@@ -177,13 +183,10 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
 
                 if let Some(typ) = bvar_ty {
                     // if `typ` is not convertible to `typ_exp`, fail.
-                    let typ_exp = snf(&pbvar_typ_exp, rules);
-                    let typ = snf(&typ, rules);
-
-                    if !equality_check(&typ, &typ_exp) {
-                        println!("{:?} != {:?}", typ, typ_exp);
+                    if !equality_check(&typ, &pbvar_typ_exp, rules) {
+                        // println!("{:?} != {:?}", snf_typ, snf_typ_exp);
                         return Err(Error::TermsNotEquivalent);
-                    }
+                    };
                 } else {
                     lbvar.infer_as(pbvar_typ_exp);
                 }
@@ -202,7 +205,7 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
         LNode::Var { ty, .. } if ty.borrow().is_none() => {
             *ty.borrow_mut() = Some(typ_exp.clone());
         }
-        LNode::BVar { ty, .. } if ty.borrow().is_none() => {
+        LNode::BVar { ty, is_meta, .. } if ty.borrow().is_none() => {
             *ty.borrow_mut() = Some(typ_exp.clone());
         }
         _ => {
@@ -214,11 +217,8 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
             let typ_inf = typ_inf.unwrap();
 
             // If `typ_inf` is not convertible to `typ_exp`, fail.
-            let typ_inf = snf(&typ_inf, rules);
-            let typ_exp = snf(&typ_exp, rules);
-
-            if !equality_check(&typ_inf, &typ_exp) {
-                println!("{:?} =/= {:?}", typ_inf, typ_exp);
+            if !equality_check(&typ_inf, &typ_exp, rules) {
+                // info!("{:?} =/= {:?}", snf_typ_inf, snf_typ_exp);
                 return Err(Error::TermsNotEquivalent);
             }
         }
@@ -227,20 +227,31 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
     Ok(())
 }
 
-fn equality_check(r1: &Rc<LNode>, r2: &Rc<LNode>) -> bool {
-    // return true;
-    let g = LGraph::from_roots(r1, r2);
-    let check_res = g.blind_check();
+fn timing<F, T>(fun: F) -> (T, u128)
+where
+    F: Fn() -> T,
+{
+    let start = SystemTime::now();
+    let result = fun();
+    let end = SystemTime::now();
 
-    // g.blind_check().is_ok() && g.var_check()
-    if let Err(e) = check_res {
-        println!("Error {:?}", e);
-        return false;
-    } else {
-        let res = g.var_check();
+    let time = end.duration_since(start).unwrap().as_millis();
+    (result, time)
+}
 
-        res
-    }
+fn equality_check(r1: &Rc<LNode>, r2: &Rc<LNode>, rules: &RewriteMap) -> bool {
+    let (r1_snf, t1) = timing(|| snf(r1, rules));
+    let (r2_snf, t2) = timing(|| snf(r2, rules));
+
+    let g = LGraph::from_roots(&r1_snf, &r2_snf);
+
+    let subs = &mut HashMap::new();
+    let r1_snf = deep_clone(subs, &r1_snf);
+    let r2_snf = deep_clone(subs, &r2_snf);
+
+    let (check_res, time) = timing(|| g.blind_check().is_ok() && g.var_check());
+
+    check_res
 }
 
 fn check_typeof<F>(node: &Rc<LNode>, pred: F, rules: &RewriteMap) -> Result<()>
@@ -253,7 +264,6 @@ where
     }
 
     let term = term.unwrap();
-    // let term = weak_head(&term, rules);
     assert!(pred(term));
 
     Ok(())
@@ -339,9 +349,10 @@ mod tests {
         let ctx = parse(filepath);
 
         // let tname = "matita_basics_logic.eq_ind_r";
+        let tname = "matita_basics_logic.eqProp";
         // let tname = "matita_basics_logic.And_inv_ind";
         // let tname = "matita_basics_logic.Not_inv_rect_CProp2";
-        let tname = "matita_basics_logic.True_discr";
+        // let tname = "matita_basics_logic.True_discr";
 
         let term = ctx.0.get(tname).unwrap();
         let size = term.size();
