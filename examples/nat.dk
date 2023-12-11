@@ -1,12 +1,12 @@
 Nat: Type.
 
 zero: Nat.
+succ: Nat -> Type.
 
 def S: Nat -> Nat.
 
 def plus: Nat -> Nat -> Nat.
-[ n: Nat ] plus zero n --> n
+[ n ] plus zero n --> n.
 [ m: Nat, n: Nat] plus (S m) n --> S (plus m n).
 
-(; def K : Nat -> Nat := x => (S (S zero)). ;)
-(; def K2 := x : Nat => S ( S zero ). ;)
+def K : n: Nat -> m: succ n -> Nat := n: Nat => m: succ n => n.
