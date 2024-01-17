@@ -7,7 +7,6 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use deepsize::DeepSizeOf;
 use log::info;
 use LNode::*;
 
@@ -89,10 +88,6 @@ impl PartialEq for LNode {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
     }
-
-    fn ne(&self, other: &Self) -> bool {
-        !Self::eq(self, other)
-    }
 }
 
 impl Debug for LNode {
@@ -153,12 +148,12 @@ impl Debug for LNode {
                     sub.fmt(f)?;
                     f.write_str("]")
                 } else if let Some(symb) = symb {
-                    f.write_str(&symb)
+                    f.write_str(symb)
                 } else {
                     f.write_str("_")
                 }
             }
-            Var { symb, .. } => f.write_str(&symb),
+            Var { symb, .. } => f.write_str(symb),
             Type => f.write_str("Type"),
             Kind => f.write_str("Kind"),
         }
@@ -279,7 +274,7 @@ impl LNode {
 
     pub fn new_meta_var(t: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
         Rc::new(BVar {
-            symb: symb.map(|s| String::from(s)),
+            symb: symb.map(String::from),
             is_meta: true,
             binder: RefCell::new(Weak::new()),
             parent: RefCell::new(Vec::new()),
@@ -295,7 +290,7 @@ impl LNode {
 
     pub fn new_bvar(t: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
         Rc::new(BVar {
-            symb: symb.map(|s| String::from(s)),
+            symb: symb.map(String::from),
             is_meta: false,
             binder: RefCell::new(Weak::new()),
             parent: RefCell::new(Vec::new()),
@@ -513,9 +508,8 @@ impl LNode {
     /// Binds a `BVar` node to an `Abs` node.
     pub(crate) fn bind_to(&self, binder: Rc<LNode>) {
         let abs = Rc::downgrade(&binder);
-        match &*self {
-            BVar { binder, .. } => *binder.borrow_mut() = abs,
-            _ => (),
+        if let BVar { binder, .. } = self {
+            *binder.borrow_mut() = abs
         }
     }
 
@@ -596,9 +590,8 @@ impl LNode {
     }
 
     pub fn bind_to_context(&self) {
-        match self {
-            BVar { binder, .. } => *binder.borrow_mut() = Weak::new(),
-            _ => (),
+        if let BVar { binder, .. } = self {
+            *binder.borrow_mut() = Weak::new()
         }
     }
 
@@ -663,7 +656,7 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
             let left = deep_clone(&mut HashMap::new(), &left);
 
             if let LNode::Abs { bvar, body, .. } = &*left {
-                bvar.subs_to(&right);
+                bvar.subs_to(right);
                 weak_head(body, rules)
             } else {
                 // Sono già in normal form.
@@ -683,7 +676,7 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
                     if wnf_computed {
                         sub.clone()
                     } else {
-                        let wnf = weak_head(&sub, rules);
+                        let wnf = weak_head(sub, rules);
                         *normal_forms.borrow_mut() = NormalForms(true, snf);
                         *subs = Some(wnf.clone());
                         wnf
@@ -712,11 +705,11 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Option<Rc<LNode>> {
     if let Some(rew) = rew {
         for Rewrite(lhs, rhs) in rew {
             let mut subs = HashMap::new();
-            let lhs = deep_clone(&mut subs, &lhs);
-            let rhs = deep_clone(&mut subs, &rhs);
+            let lhs = deep_clone(&mut subs, lhs);
+            let rhs = deep_clone(&mut subs, rhs);
 
             // Mi mantengo un campo booleano per le metavariabili
-            if matches(&wnf, &lhs, rules) {
+            if matches(wnf, &lhs, rules) {
                 return Some(weak_head(&rhs, rules));
             }
         }
@@ -725,107 +718,106 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Option<Rc<LNode>> {
     None
 }
 
-
-impl DeepSizeOf for LNode {
-    // sommare anche la sizeof di self
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        match self {
-            App {
-                left,
-                right,
-                parent,
-                undir,
-                canonic,
-                building,
-                queue,
-            } => {
-                left.deep_size_of_children(context)
-                    + right.deep_size_of_children(context)
-                    + parent.deep_size_of_children(context)
-                    + undir.deep_size_of_children(context)
-                    + canonic.deep_size_of_children(context)
-                    + building.deep_size_of_children(context)
-                    + queue.deep_size_of_children(context)
-            }
-            Prod {
-                bvar,
-                body,
-                parent,
-                undir,
-                canonic,
-                building,
-                queue,
-            }
-            | Abs {
-                bvar,
-                body,
-                parent,
-                undir,
-                canonic,
-                building,
-                queue,
-            } => {
-                bvar.deep_size_of_children(context)
-                    + body.deep_size_of_children(context)
-                    + parent.deep_size_of_children(context)
-                    + undir.deep_size_of_children(context)
-                    + canonic.deep_size_of_children(context)
-                    + building.deep_size_of_children(context)
-                    + queue.deep_size_of_children(context)
-            }
-            BVar {
-                binder,
-                parent,
-                undir,
-                canonic,
-                building,
-                queue,
-                subs_to,
-                ty,
-                normal_forms,
-                is_meta,
-                symb,
-            } => {
-                binder.deep_size_of_children(context)
-                    + subs_to.deep_size_of_children(context)
-                    + parent.deep_size_of_children(context)
-                    + undir.deep_size_of_children(context)
-                    + canonic.deep_size_of_children(context)
-                    + building.deep_size_of_children(context)
-                    + queue.deep_size_of_children(context)
-                    + ty.deep_size_of_children(context)
-                    + is_meta.deep_size_of_children(context)
-                    + symb.deep_size_of_children(context)
-                    + normal_forms.deep_size_of_children(context)
-            }
-            Var {
-                is_meta,
-                parent,
-                undir,
-                canonic,
-                building,
-                queue,
-                ty,
-                normal_forms,
-                symb,
-            } => {
-                parent.deep_size_of_children(context)
-                    + undir.deep_size_of_children(context)
-                    + canonic.deep_size_of_children(context)
-                    + building.deep_size_of_children(context)
-                    + queue.deep_size_of_children(context)
-                    + ty.deep_size_of_children(context)
-                    + is_meta.deep_size_of_children(context)
-                    + symb.deep_size_of_children(context)
-                    + normal_forms.deep_size_of_children(context)
-            }
-            Type | Kind => 1,
-        }
-    }
-}
-
-impl DeepSizeOf for NormalForms {
-    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-        self.0.deep_size_of_children(context) + self.1.deep_size_of_children(context)
-    }
-}
+// impl DeepSizeOf for LNode {
+//     // sommare anche la sizeof di self
+//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+//         match self {
+//             App {
+//                 left,
+//                 right,
+//                 parent,
+//                 undir,
+//                 canonic,
+//                 building,
+//                 queue,
+//             } => {
+//                 left.deep_size_of_children(context)
+//                     + right.deep_size_of_children(context)
+//                     + parent.deep_size_of_children(context)
+//                     + undir.deep_size_of_children(context)
+//                     + canonic.deep_size_of_children(context)
+//                     + building.deep_size_of_children(context)
+//                     + queue.deep_size_of_children(context)
+//             }
+//             Prod {
+//                 bvar,
+//                 body,
+//                 parent,
+//                 undir,
+//                 canonic,
+//                 building,
+//                 queue,
+//             }
+//             | Abs {
+//                 bvar,
+//                 body,
+//                 parent,
+//                 undir,
+//                 canonic,
+//                 building,
+//                 queue,
+//             } => {
+//                 bvar.deep_size_of_children(context)
+//                     + body.deep_size_of_children(context)
+//                     + parent.deep_size_of_children(context)
+//                     + undir.deep_size_of_children(context)
+//                     + canonic.deep_size_of_children(context)
+//                     + building.deep_size_of_children(context)
+//                     + queue.deep_size_of_children(context)
+//             }
+//             BVar {
+//                 binder,
+//                 parent,
+//                 undir,
+//                 canonic,
+//                 building,
+//                 queue,
+//                 subs_to,
+//                 ty,
+//                 normal_forms,
+//                 is_meta,
+//                 symb,
+//             } => {
+//                 binder.deep_size_of_children(context)
+//                     + subs_to.deep_size_of_children(context)
+//                     + parent.deep_size_of_children(context)
+//                     + undir.deep_size_of_children(context)
+//                     + canonic.deep_size_of_children(context)
+//                     + building.deep_size_of_children(context)
+//                     + queue.deep_size_of_children(context)
+//                     + ty.deep_size_of_children(context)
+//                     + is_meta.deep_size_of_children(context)
+//                     + symb.deep_size_of_children(context)
+//                     + normal_forms.deep_size_of_children(context)
+//             }
+//             Var {
+//                 is_meta,
+//                 parent,
+//                 undir,
+//                 canonic,
+//                 building,
+//                 queue,
+//                 ty,
+//                 normal_forms,
+//                 symb,
+//             } => {
+//                 parent.deep_size_of_children(context)
+//                     + undir.deep_size_of_children(context)
+//                     + canonic.deep_size_of_children(context)
+//                     + building.deep_size_of_children(context)
+//                     + queue.deep_size_of_children(context)
+//                     + ty.deep_size_of_children(context)
+//                     + is_meta.deep_size_of_children(context)
+//                     + symb.deep_size_of_children(context)
+//                     + normal_forms.deep_size_of_children(context)
+//             }
+//             Type | Kind => 1,
+//         }
+//     }
+// }
+//
+// impl DeepSizeOf for NormalForms {
+//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+//         self.0.deep_size_of_children(context) + self.1.deep_size_of_children(context)
+//     }
+// }

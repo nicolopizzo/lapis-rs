@@ -27,8 +27,8 @@ impl<'a, 'b: 'a> LGraph<'a> {
         Self::rec_from(&mut nodes, &mut ptrs, r2);
 
         // Creo un arco tra le due radici
-        r1.add_undir(&r2);
-        r2.add_undir(&r1);
+        r1.add_undir(r2);
+        r2.add_undir(r1);
 
         Self { nodes }
     }
@@ -77,7 +77,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
     fn var_nodes(&self) -> Vec<&Rc<LNode>> {
         self.nodes
             .iter()
-            .map(|x| *x)
+            .copied()
             .filter(|x| x.is_bvar() || x.is_var())
             .collect()
     }
@@ -94,7 +94,6 @@ impl<'a, 'b: 'a> LGraph<'a> {
             // Invariant: canonic is set if it is Some(x) after upgrade.
             if c_n.upgrade().is_none() {
                 self.build_equivalence_class(n)?;
-            } else {
             }
         }
 
@@ -127,11 +126,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
 
                 let c_parent = m.canonic().upgrade();
                 match c_parent {
-                    None => {
-                        if let Err(e) = self.build_equivalence_class(&m) {
-                            return Err(e);
-                        }
-                    }
+                    None => self.build_equivalence_class(&m)?,
                     Some(c1) => {
                         if c1.building() {
                             return Err(String::from("Error: Parent still building"));
@@ -147,11 +142,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 let m = m.upgrade().unwrap();
                 let m1 = m.canonic().upgrade();
                 match m1 {
-                    None => {
-                        if let Err(e) = self.enqueue_and_propagate(&m, &c) {
-                            return Err(e);
-                        }
-                    }
+                    None => self.enqueue_and_propagate(&m, c)?,
                     Some(c1) => {
                         let cc = c.clone();
                         if c1 != cc {
@@ -204,7 +195,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
             ) => {
                 let sub = &mut *subs_to.borrow_mut();
                 if let Some(sub) = sub {
-                    return self.enqueue_and_propagate(&sub, c);
+                    return self.enqueue_and_propagate(sub, c);
                 } else if *is_meta {
                     *sub = Some(c.clone());
                 } else {
@@ -223,7 +214,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 // Devo quindi effettuare `enqueue_and_propagate` della sostituzione con v.
                 let sub = &mut *subs_to.borrow_mut();
                 if let Some(sub) = sub {
-                    return self.enqueue_and_propagate(m, &sub);
+                    return self.enqueue_and_propagate(m, sub);
                 } else if *is_meta {
                     *sub = Some(m.clone());
                 } else {
@@ -255,30 +246,26 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 if v.is_var() || w.is_var() {
                     return false;
                 }
-                match (&**v, &*w) {
-                    (BVar { binder: b1, .. }, BVar { binder: b2, .. }) => {
-                        let b1 = &b1.borrow().upgrade();
-                        let b2 = &b2.borrow().upgrade();
-                        match (&b1, &b2) {
-                            // If both bvars have a binder check their canonic form.
-                            (Some(b1), Some(b2)) => {
-                                let canonic_b1 = b1.canonic().upgrade();
-                                let canonic_b2 = b2.canonic().upgrade();
+                if let (BVar { binder: b1, .. }, BVar { binder: b2, .. }) = (&**v, &*w) {
+                    let b1 = &b1.borrow().upgrade();
+                    let b2 = &b2.borrow().upgrade();
+                    match (&b1, &b2) {
+                        // If both bvars have a binder check their canonic form.
+                        (Some(b1), Some(b2)) => {
+                            let canonic_b1 = b1.canonic().upgrade();
+                            let canonic_b2 = b2.canonic().upgrade();
 
-                                // If the found canonic do not match, the var_check fails.
-                                if canonic_b1 != canonic_b2 {
-                                    return false;
-                                }
-                            }
-
-                            (None, None) => (),
-                            _ => {
+                            // If the found canonic do not match, the var_check fails.
+                            if canonic_b1 != canonic_b2 {
                                 return false;
                             }
                         }
-                    }
 
-                    (_, _) => (),
+                        (None, None) => (),
+                        _ => {
+                            return false;
+                        }
+                    }
                 }
             }
         }

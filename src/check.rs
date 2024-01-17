@@ -11,7 +11,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use deepsize::DeepSizeOf;
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::__Deref;
 use log::{error, info, warn};
@@ -38,7 +37,7 @@ static mut OPEN_DEBUG: usize = 0;
 
 pub fn check_context(ctx: &Context) -> Result<()> {
     let Context(gamma, rules) = ctx;
-    let to_check = rules.iter().map(|(_, x)| x).flatten().collect::<Vec<_>>();
+    let to_check = rules.iter().flat_map(|(_, x)| x).collect::<Vec<_>>();
 
     let bar = ProgressBar::new(to_check.len() as u64);
     let sty =
@@ -54,7 +53,7 @@ pub fn check_context(ctx: &Context) -> Result<()> {
         // For debug purposes.
         // File::create("../../log/output.log").unwrap();
 
-        let check = check_rule(&lhs, &rhs, &rules);
+        let check = check_rule(lhs, rhs, rules);
         if let Err(e) = check {
             println!("Couldn't check {:?}", lhs);
             // return Err(e);
@@ -91,7 +90,7 @@ fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()
 fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>> {
     match &**node {
         LNode::App { left, right, .. } => {
-            let left_ty = type_infer(&left, rules)?;
+            let left_ty = type_infer(left, rules)?;
             if left_ty.is_none() {
                 return Ok(None);
             }
@@ -109,13 +108,13 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 type_check(right, &bvar_ty, rules)?;
 
                 // substitute occurrences of `bvar` in `body` with `right`
-                bvar.subs_to(&right);
+                bvar.subs_to(right);
 
                 let body = weak_head(body, rules);
-                return Ok(Some(body));
+                Ok(Some(body))
             } else {
                 println!("{:?}", left_ty_whd);
-                return Err(Error::ProductExpected);
+                Err(Error::ProductExpected)
             }
         }
         LNode::Abs { bvar, body, .. } => {
@@ -192,9 +191,9 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
                 }
 
                 pbvar.bind_to_context();
-                lbvar.subs_to(&pbvar);
+                lbvar.subs_to(pbvar);
 
-                type_check(&lbody, &pbody, rules)?;
+                type_check(lbody, pbody, rules)?;
 
                 lbvar.unsub();
                 pbvar.bind_to(typ_exp.clone());

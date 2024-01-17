@@ -4,7 +4,7 @@ use core::panic;
 use std::{collections::HashMap, env, process::exit, rc::Rc};
 
 use check::check_context;
-use parser::{Context, Rewrite, parse};
+use parser::{parse, Context, Rewrite};
 
 mod check;
 mod lgraph;
@@ -19,7 +19,7 @@ fn main() {
     }
 
     let filepath = &args[1];
-    let idx = filepath.rfind("/");
+    let idx = filepath.rfind('/');
     if let Some(idx) = idx {
         let path = &filepath[0..idx];
         if let Err(e) = env::set_current_dir(path) {
@@ -41,7 +41,6 @@ fn main() {
         Err(e) => {
             println!("Check failed");
             println!("Error: {:?}", e);
-
         }
     }
 }

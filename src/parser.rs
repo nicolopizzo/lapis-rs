@@ -68,9 +68,9 @@ fn parse_file(filepath: &str, ctx: &mut Context) {
 
     // let bar = ProgressBar::new(cmds.len() as u64);
     // let sty =
-        // ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
-            // .unwrap()
-            // .progress_chars("==-");
+    // ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
+    // .unwrap()
+    // .progress_chars("==-");
     // bar.set_style(sty);
     // bar.set_message("Parsing...");
     // bar.tick();
@@ -114,10 +114,11 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                             LNode::new_abs(bvar.clone(), body)
                         });
 
-
-                        ctx.1.insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
+                        ctx.1
+                            .insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
                     } else {
-                        ctx.1.insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
+                        ctx.1
+                            .insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
                     }
                 }
 
@@ -127,7 +128,7 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
         Command::Rules(rules) => {
             // Parse rewrite rules.
             let rules: Vec<_> = rules
-                .into_iter()
+                .iter()
                 .map(|rule| parse_rule(rule, ctx, path))
                 .collect();
 
