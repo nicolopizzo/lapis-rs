@@ -11,6 +11,7 @@ indicatif = "0.17.7"
 lazy_static = "1.4.0"
 log = "0.4.20"
 test-log = "0.2.13"
+deepsize = "0.2.0"
 
 [dev-dependencies]
 env_logger = "0.10.0"
