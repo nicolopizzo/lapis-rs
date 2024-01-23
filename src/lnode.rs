@@ -254,11 +254,11 @@ impl LNode {
         abs
     }
 
-    pub fn new_var(t: Option<Rc<Self>>, symb: &str) -> Rc<Self> {
+    pub fn new_var(ty: Option<Rc<Self>>, symb: &str) -> Rc<Self> {
         let term = Rc::new(Var {
             symb: String::from(symb),
             is_meta: false,
-            ty: RefCell::new(t),
+            ty: RefCell::new(ty),
             parent: RefCell::new(Vec::new()),
             undir: RefCell::new(Vec::new()),
             canonic: RefCell::new(Weak::new()),
@@ -272,7 +272,7 @@ impl LNode {
         term
     }
 
-    pub fn new_meta_var(t: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
+    pub fn new_meta_var(ty: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
         Rc::new(BVar {
             symb: symb.map(String::from),
             is_meta: true,
@@ -283,12 +283,12 @@ impl LNode {
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
-            ty: RefCell::new(t),
+            ty: RefCell::new(ty),
             normal_forms: RefCell::new(NormalForms(false, None)),
         })
     }
 
-    pub fn new_bvar(t: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
+    pub fn new_bvar(ty: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
         Rc::new(BVar {
             symb: symb.map(String::from),
             is_meta: false,
@@ -299,7 +299,7 @@ impl LNode {
             building: RefCell::new(false),
             queue: RefCell::new(Vec::new().into()),
             subs_to: RefCell::new(None),
-            ty: RefCell::new(t),
+            ty: RefCell::new(ty),
             normal_forms: RefCell::new(NormalForms(false, None)),
         })
     }
@@ -322,8 +322,8 @@ impl LNode {
 
     pub fn get_type(&self) -> Option<Rc<Self>> {
         match self {
-            Var { ty: t, .. } => t.borrow().clone(),
-            BVar { ty: t, .. } => t.borrow().clone(),
+            Var { ty, .. } => ty.borrow().clone(),
+            BVar { ty, .. } => ty.borrow().clone(),
             _ => None,
         }
     }
