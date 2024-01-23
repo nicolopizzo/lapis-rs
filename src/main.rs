@@ -13,7 +13,7 @@ mod parser;
 mod utils;
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 1 {
+    if args.len() != 2 {
         panic!("{}\n{}", "ERROR: YOU MUST SPECIFY EXACTLY ONE TARGET FILE",
                "Example usage: lapis <FILEPATH>");
     }
