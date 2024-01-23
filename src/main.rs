@@ -14,8 +14,8 @@ mod utils;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() <= 1 {
-        println!("ERROR: YOU MUST SPECIFY A TARGET FILE");
-        println!("Example usage: lapis <FILEPATH>");
+        panic!("{}\n{}", "ERROR: YOU MUST SPECIFY A TARGET FILE",
+               "Example usage: lapis <FILEPATH>");
     }
 
     let filepath = &args[1];
