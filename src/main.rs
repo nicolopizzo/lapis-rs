@@ -27,7 +27,7 @@ fn main() {
         }
     }
 
-    let idx = idx.unwrap_or(0);
+    let idx = match idx { None => 0, Some(i) => i+1 };
     let filename = &filepath[idx..];
 
     let ctx = parse(filename);
