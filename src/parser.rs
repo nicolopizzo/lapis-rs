@@ -32,6 +32,8 @@ type Result<T> = std::result::Result<T, Error>;
 pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 
 pub type GammaMap = HashMap<String, Rc<LNode>>;
+// first usize is the raw pointer to the head symbol
+// second usize is the size of the head
 pub type RewriteMap = HashMap<(usize, usize), Vec<Rewrite>>;
 
 #[derive(Debug, Clone, DeepSizeOf)]
