@@ -5,6 +5,7 @@ use std::{collections::HashMap, env, process::exit, rc::Rc};
 
 use check::check_context;
 use parser::{parse, Context, Rewrite};
+use deepsize::DeepSizeOf;
 
 mod check;
 mod lgraph;
@@ -31,6 +32,7 @@ fn main() {
     let filename = &filepath[idx..];
 
     let ctx = parse(filename);
+    println!("Size = {}", ctx.deep_size_of());
     let check = check_context(&ctx);
 
     match check {

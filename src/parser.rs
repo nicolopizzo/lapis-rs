@@ -19,6 +19,8 @@ use indicatif::{ProgressBar, ProgressIterator, ProgressStyle};
 use lazy_static::{__Deref, lazy_static};
 use log::info;
 
+use deepsize::*;
+
 pub enum Error {
     FileNotFound,
     GenericError,
@@ -29,11 +31,27 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone)]
 pub struct Rewrite(pub Rc<LNode>, pub Rc<LNode>);
 
+impl DeepSizeOf for Rewrite {
+    // sommare anche la sizeof di self
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        let Rewrite (lhs,rhs) = self;
+        lhs.deep_size_of_children(context) + rhs.deep_size_of_children(context)
+    }
+}
+
 pub type GammaMap = HashMap<String, Rc<LNode>>;
 pub type RewriteMap = HashMap<(usize, usize), Vec<Rewrite>>;
 
 #[derive(Debug, Clone)]
 pub struct Context(pub GammaMap, pub RewriteMap);
+
+impl DeepSizeOf for Context {
+    // sommare anche la sizeof di self
+    fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
+        let Context (gm,rm) = self;
+        gm.deep_size_of_children(context) + rm.deep_size_of_children(context)
+    }
+}
 
 lazy_static! {
     static ref OPEN_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
