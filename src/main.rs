@@ -28,7 +28,7 @@ fn main() {
     }
 
     let idx = idx.unwrap_or(0);
-    let filename = &filepath[idx + 1..];
+    let filename = &filepath[idx..];
 
     let ctx = parse(filename);
     let check = check_context(&ctx);
