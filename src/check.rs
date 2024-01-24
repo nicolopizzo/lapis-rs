@@ -137,7 +137,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 //CSC: return Ok(None);
             }
             let bvar_ty = bvar_ty.unwrap();
-            check_typeof(&bvar_ty, |node| node.is_type(), rules)?;
+            check_whd_typeof(&bvar_ty, |node| node.is_sort(), rules)?;
 
             // Porzione di codice nuova
             let xnew = LNode::new_bvar(Some(bvar_ty.clone()), Some("x'"));
@@ -150,7 +150,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             }
 
             let body_ty = body_ty.unwrap();
-            check_typeof(&body_ty.clone(), |node| node.is_sort(), rules)?;
+            check_whd_typeof(&body_ty.clone(), |node| node.is_sort(), rules)?;
 
             bvar.unsub();
             let prod = LNode::new_prod(xnew, body_ty);
@@ -159,7 +159,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
         LNode::BVar { ty, .. } | LNode::Var { ty, .. } => Ok(ty.borrow().clone()),
         LNode::Prod { bvar, body, .. } => {
             let bvar_ty = bvar.get_type().expect("Variable is not typed.");
-            check_typeof(&bvar_ty, |node| node.is_type(), rules)?;
+            check_whd_typeof(&bvar_ty, |node| node.is_sort(), rules)?;
 
             let body_ty = type_infer(body, rules)?;
             if body_ty.is_none() {
@@ -167,7 +167,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             }
 
             let body_ty = body_ty.unwrap();
-            check_typeof(&body_ty.clone(), |node| node.is_sort(), rules)?;
+            check_whd_typeof(&body_ty.clone(), |node| node.is_sort(), rules)?;
 
             Ok(Some(body_ty))
         }
@@ -269,17 +269,18 @@ fn equality_check(r1: &Rc<LNode>, r2: &Rc<LNode>, rules: &RewriteMap) -> bool {
     check_res
 }
 
-fn check_typeof<F>(node: &Rc<LNode>, pred: F, rules: &RewriteMap) -> Result<()>
+fn check_whd_typeof<F>(node: &Rc<LNode>, pred: F, rules: &RewriteMap) -> Result<()>
 where
-    F: Fn(Rc<LNode>) -> bool,
+    F: Fn(&Rc<LNode>) -> bool,
 {
-    let term = type_infer(node, rules)?;
-    if term.is_none() {
+    let ty = type_infer(node, rules)?;
+    if ty.is_none() {
         return Err(Error::GenericError);
     }
 
-    let term = term.unwrap();
-    assert!(pred(term));
+    let ty = ty.unwrap();
+    let ty = weak_head(&ty, rules);
+    assert!(pred(&ty));
 
     Ok(())
 }
