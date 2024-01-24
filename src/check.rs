@@ -365,6 +365,32 @@ mod tests {
     }
 
     #[test]
+    fn test_list() {
+        before_each();
+        env::set_current_dir("matita-light").expect("ERROR");
+        // let filepath = "cic.dk";
+        let filepath = "matita_basics_lists_list.dk";
+        let c = parse(filepath);
+
+        let check = check_context(&c);
+
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
+    }
+
+    #[test]
+    fn test_nat() {
+        before_each();
+        env::set_current_dir("matita-light").expect("ERROR");
+        // let filepath = "cic.dk";
+        let filepath = "matita_arithmetics_nat.dk";
+        let c = parse(filepath);
+
+        let check = check_context(&c);
+
+        assert!(check.is_ok(), "{:?}", check.unwrap_err());
+    }
+
+    #[test]
     fn test_hard() {
         before_each();
         env::set_current_dir("matita-light").expect("ERROR");
