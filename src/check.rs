@@ -303,7 +303,8 @@ mod tests {
     use std::{collections::HashSet, env, fmt::format, fs, rc::Rc};
 
     fn before_each() {
-        // log4rs::init_file("log4rs.yaml", Default::default()).unwrap();
+        // CSC: commentare per non fare logging
+        log4rs::init_file("log4rs.yaml", Default::default()).unwrap();
 
         env::set_current_dir("examples").expect("Could not set directory");
     }

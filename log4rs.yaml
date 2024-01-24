@@ -11,11 +11,12 @@ appenders:
       # pattern: "| {f:>15}:{L:<4} | {l:>5} | {t:<15} | {m}\n"
     append: false
 
-# root:
-  # level: trace
-  # appenders:
-    # - testing
-    # - stdout
+# CSC: scommentate le prossime 4 righe per "attivare" il logging
+root:
+  level: trace
+  appenders:
+    - testing
+    #- stdout
 
 loggers:
   CONSOLE:
