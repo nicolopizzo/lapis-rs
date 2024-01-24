@@ -173,9 +173,13 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
                     binder: tbinder, ..
                 } = tterm
                 {
-                    let c1 = tbinder.borrow().upgrade();
-                    let c2 = p_binder.borrow().upgrade();
-                    c1 == c2
+                    let b1 = tbinder.borrow().upgrade();
+                    let b2 = p_binder.borrow().upgrade();
+                    match (b1,b2) {
+                     (None, None) => true,
+                     (Some(p1), Some(p2)) => Rc::ptr_eq(&p1,&p2),
+                     _ => false
+                    }
                 } else {
                     false
                 }
@@ -198,6 +202,8 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
             },
         ) => matches(&l1, &l2, rules) && matches(&b1, &b2, rules),
         // Constant variables, sorts.
-        _ => term == pattern,
+        (LNode::Type, LNode::Type) => true,
+        (LNode::Kind, LNode::Kind) => true,
+        _ => Rc::ptr_eq(term,pattern)
     }
 }
