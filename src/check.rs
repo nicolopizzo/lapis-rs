@@ -187,7 +187,8 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             }
 
             let body_ty = body_ty.unwrap();
-            check_whd_typeof(&body_ty.clone(), |node| node.is_sort(), rules)?;
+            let wnf_body_ty = weak_head(&body_ty, rules);
+            assert!(wnf_body_ty.is_sort());
 
             Ok(Some(body_ty))
         }
