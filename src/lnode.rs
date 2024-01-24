@@ -316,6 +316,12 @@ impl LNode {
         matches!(self, BVar { .. })
     }
 
+    pub(crate) fn is_flexible(&self) -> bool {
+        if let BVar { is_meta, subs_to, .. } = self {
+            *is_meta && subs_to.borrow().is_none()
+        } else { false }
+    }
+
     pub(crate) fn is_var(&self) -> bool {
         matches!(self, Var { .. })
     }

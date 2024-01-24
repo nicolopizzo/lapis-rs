@@ -47,6 +47,9 @@ LENTEZZA:
   nella right to left dell'applicazione
 * // CSC: inefficient, deep_clone repeated multiple times
   anche nella weak head della whd
+* le regole di riscrittura finiscono per ricalolare la forma
+  normale degli argomenti di un'applicazione tante volte ==>
+  fare storing (es. usando uno stack) come fa LambdaPi
 
 1) parser: ufficio complicazione cose semplici?
    - si usa un'unica mappa per costanti e variabili
