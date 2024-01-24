@@ -231,23 +231,25 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
             }
 
             let name = if path.is_empty() {
-                modpath.to_string() + "." + name
+                "".to_owned() + name
             } else {
                 pathname + "." + name
             };
 
             // println!("{:#?}", ctx.0);
-            let term = ctx
-                .0
-                .get(&name)
-                .unwrap_or_else(|| panic!("Symbol {:?} not in scope", name));
-
-            term.clone()
+            let term = ctx.0.get(&name);
+            if let Some(term) = term { term.clone() }
+            else if path.is_empty() {
+                let term = ctx.0.get(&(modpath.to_string() + "." + &name)).unwrap_or_else(|| panic!("Symbol {:?} not in scope", name));
+                term.clone()
+            } else {
+                panic!("Symbol {:?} not in scope", name);
+            }
         }
         AppH::Abst(name, typ, body) => {
             // typ is optional, so it may be None
             let typ = typ.clone().map(|typ| map_term(&typ, ctx, modpath));
-            let name = modpath.to_string() + "." + name;
+            //let name = modpath.to_string() + "." + name;
             let bvar = LNode::new_bvar(typ, Some(&name));
 
             vars = vec![(name.to_string(), bvar.clone())];
@@ -259,7 +261,7 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
             // typ is optional, so it may be None
             let typ = Some(map_term(&typ, ctx, modpath));
             let name = name.as_deref();
-            let name = name.map(|name| modpath.to_string() + "." + name);
+            //let name = name.map(|name| modpath.to_string() + "." + name);
             let bvar = LNode::new_bvar(typ, name.as_deref());
 
             let body = if let Some(name) = name {
