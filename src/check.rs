@@ -133,7 +133,8 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             // let bvar_ty = type_infer(bvar, rules)?;
             let bvar_ty = bvar.get_type();
             if bvar_ty.is_none() {
-                return Ok(None);
+                panic!("Inferring type of untyped abstraction");
+                //CSC: return Ok(None);
             }
             let bvar_ty = bvar_ty.unwrap();
             check_typeof(&bvar_ty, |node| node.is_type(), rules)?;
@@ -144,7 +145,8 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
 
             let body_ty = type_infer(body, rules)?;
             if body_ty.is_none() {
-                return Ok(None);
+                panic!("Abstraction with untyped body");
+                //CSC: return Ok(None);
             }
 
             let body_ty = body_ty.unwrap();
@@ -161,7 +163,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
 
             let body_ty = type_infer(body, rules)?;
             if body_ty.is_none() {
-                return Ok(None);
+                panic!("Untyped body of a product");
             }
 
             let body_ty = body_ty.unwrap();
@@ -199,6 +201,8 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
                         return Err(Error::TermsNotEquivalent);
                     };
                 } else {
+                    // CSC: qui cosa succede delle variabili libere che
+                    // verranno legate da un PI?
                     lbvar.infer_as(pbvar_typ_exp);
                 }
 
