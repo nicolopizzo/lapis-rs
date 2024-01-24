@@ -111,6 +111,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             let left_ty_whd = weak_head(&left_ty_whd, rules);
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
+            // CSC: inefficient, copy repeated multiple times
             let left_ty_whd = deep_clone(&mut HashMap::new(), &left_ty_whd);
 
             if let LNode::Prod { bvar, body, .. } = &*left_ty_whd {
@@ -121,8 +122,8 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 // substitute occurrences of `bvar` in `body` with `right`
                 bvar.subs_to(right);
 
-                let body = weak_head(body, rules);
-                Ok(Some(body))
+                //CSC XXXXYYYY was the cause of slowness: ????   let body = weak_head(body, rules);
+                Ok(Some(body.clone()))
             } else {
                 println!("{:?}", left_ty_whd);
                 Err(Error::ProductExpected)
