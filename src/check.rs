@@ -39,9 +39,10 @@ static mut OPEN_DEBUG: usize = 0;
 
 pub fn check_context(ctx: &Context) -> Result<()> {
     let Context(gamma, rules) = ctx;
+    let decls = gamma.iter().collect::<Vec<_>>();
     let to_check = rules.iter().flat_map(|(_, x)| x).collect::<Vec<_>>();
 
-    let bar = ProgressBar::new(to_check.len() as u64);
+    let bar = ProgressBar::new(to_check.len() as u64 + decls.len() as u64);
     let sty =
         ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
             .unwrap()
@@ -49,6 +50,13 @@ pub fn check_context(ctx: &Context) -> Result<()> {
     bar.set_style(sty);
     bar.set_message("Checking rules");
 
+    for (name, var) in &decls {
+        let check = check_decl(name, var, rules);
+        if let Err(e) = check {
+            println!("Couldn't check {:?}", name);
+            // return Err(e);
+        }
+    }
     for Rewrite(lhs, rhs) in &to_check {
         bar.inc(1);
 
@@ -65,6 +73,18 @@ pub fn check_context(ctx: &Context) -> Result<()> {
     bar.finish_with_message("Check completed.");
 
     Ok(())
+}
+
+fn check_decl(name: &String, var: &Rc<LNode>, rules: &RewriteMap) -> Result<()> {
+    match &**var {
+     LNode::Var { ty, .. } => {
+         let ty = ty.borrow();
+         let ty = ty.as_ref().unwrap();
+         info!("Checking {name} : {:?}", ty);
+         check_whd_typeof(ty, |node| node.is_sort(), rules)
+     },
+     _ => panic!("Not a declaration")
+    }
 }
 
 fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()> {
