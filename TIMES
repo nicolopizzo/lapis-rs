@@ -9,3 +9,12 @@ real	0m0,256s
 user	0m0,222s
 sys	0m0,033s
 
+==================================================================
+
+time cargo run -- examples/matita-light/matita_arithmetics_chebyshev_bertrand256.dk 
+Size = 207464224
+## CHECKING, NO EQUALITY
+real	0m13,373s
+user	0m12,776s
+sys	0m0,596s
+
