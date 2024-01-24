@@ -144,7 +144,10 @@ impl Debug for LNode {
                 f.write_str(" -> ")?;
                 body.fmt(f)
             }
-            BVar { subs_to, symb, .. } => {
+            BVar { subs_to, symb, is_meta, .. } => {
+                if *is_meta {
+                    f.write_str("?")?;
+                }
                 if let Some(sub) = &*subs_to.borrow() {
                     f.write_str("[")?;
                     sub.fmt(f)?;

@@ -28,6 +28,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     ProductExpected,
+    SortExpected,
     AbstractionExpected,
     TriedTypingKindSort,
     TermsNotEquivalent,
@@ -94,7 +95,7 @@ fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()
         info!("Inferred type for lhs: {:?}", lhs_typ);
         info!("Checking type for rhs {:?}", rhs);
         info!("Size of rhs {:?}", rhs.deep_size_of());
-        type_check(rhs, &lhs_typ, rules)?;
+        debug!(type_check(rhs, &lhs_typ, rules))?;
     } else {
         lhs.unsub_meta();
         info!("Retry: inferring type for rhs {:?}", rhs);
@@ -118,6 +119,7 @@ fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()
 }
 
 fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>> {
+    info!("{{{{{{type_infer {:?} : ??", node); let res =
     match &**node {
         LNode::App { left, right, .. } => {
             let left_ty = type_infer(left, rules)?;
@@ -126,9 +128,11 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 //CSC: return Ok(None);
             }
 
-            let left_ty_whd = left_ty.unwrap();
+            let left_ty = left_ty.unwrap();
 
-            let left_ty_whd = weak_head(&left_ty_whd, rules);
+            //println!("PRE-ERROR WHD {:?}", left_ty);
+            let left_ty_whd = weak_head(&left_ty, rules);
+            //println!("POST-ERROR WHD {:?}", left_ty_whd);
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
             // CSC: inefficient, copy repeated multiple times
@@ -145,7 +149,12 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 //CSC XXXXYYYY was the cause of slowness: ????   let body = weak_head(body, rules);
                 Ok(Some(body.clone()))
             } else {
-                println!("{:?}", left_ty_whd);
+                println!("ERROR 1: {:?}", left_ty_whd);
+                println!("NORMAL FORM OF: {:?}", left_ty);
+                println!("TYPE OF HEAD OF {:?}", node);
+                info!("ERROR 1: {:?}", left_ty_whd);
+                info!("NORMAL FORM OF: {:?}", left_ty);
+                info!("TYPE OF HEAD OF {:?}", node);
                 Err(Error::ProductExpected)
             }
         }
@@ -188,17 +197,25 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
 
             let body_ty = body_ty.unwrap();
             let wnf_body_ty = weak_head(&body_ty, rules);
-            assert!(wnf_body_ty.is_sort());
+            if !wnf_body_ty.is_sort() {
+                info!("ERROR: Sort Expected");
+                return Err(Error::SortExpected)
+            }
 
             Ok(Some(body_ty))
         }
         LNode::Type => Ok(Some(Rc::new(LNode::Kind))),
-        LNode::Kind => Err(Error::TriedTypingKindSort),
+        LNode::Kind => {
+            info!("ERROR: Typing Kind");
+            Err(Error::TriedTypingKindSort)
+        }
     }
+    ;info!("type inferred {:?}",res); info!("}}}}}}"); res
 }
 
 /// Verifies that inferring the type of `node` reduces to `typ_exp`.
 fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Result<()> {
+    info!("{{{{{{type_check {:?} : {:?}", term, typ_exp);
     match &**term {
         LNode::Abs {
             bvar: lbvar,
@@ -235,6 +252,7 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
                 lbvar.unsub();
                 pbvar.bind_to(typ_exp.clone());
             } else {
+                info!("ERROR ProductExpected");
                 return Err(Error::ProductExpected);
             }
         }
@@ -247,6 +265,7 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
         _ => {
             let typ_inf = type_infer(term, rules)?;
             if typ_inf.is_none() {
+                info!("ERROR UnificationNeeded");
                 return Err(Error::UnificationNeeded);
             }
 
@@ -259,6 +278,7 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
             }
         }
     }
+    info!("type checked");info!("}}}}}}");
 
     Ok(())
 }
@@ -301,9 +321,12 @@ where
 
     let ty = ty.unwrap();
     let ty = weak_head(&ty, rules);
-    assert!(pred(&ty));
-
-    Ok(())
+    if pred(&ty) {
+        Ok(())
+    } else {
+        info!("ERROR CHECKING PREDICATE");
+        Err(Error::GenericError)
+    }
 }
 
 #[cfg(test)]
