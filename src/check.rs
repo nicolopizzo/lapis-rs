@@ -102,7 +102,8 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
         LNode::App { left, right, .. } => {
             let left_ty = type_infer(left, rules)?;
             if left_ty.is_none() {
-                return Ok(None);
+                panic!("Untyped head of an application");
+                //CSC: return Ok(None);
             }
 
             let left_ty_whd = left_ty.unwrap();
