@@ -10,6 +10,8 @@ use std::{
 use log::info;
 use LNode::*;
 
+use deepsize::*;
+
 use crate::{
     debug,
     parser::{Rewrite, RewriteMap},
@@ -202,6 +204,7 @@ impl LNode {
         app
     }
 
+    //CSC: alla bvar non aggiungo il parent?
     pub fn new_prod_unbound(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
         let prod = Rc::new(Prod {
             bvar: bvar.clone(),
@@ -213,6 +216,7 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
         });
 
+        //CSC: alla bvar non aggiungo il parent?
         body.add_parent(prod.clone());
 
         prod
@@ -344,6 +348,7 @@ impl LNode {
         self.reset_queue();
     }
 
+    //CSC: nome fuorviante; ridenominare in arity e farla 0-based!
     pub fn size(&self) -> usize {
         match self {
             BVar { subs_to, .. } => {
@@ -464,6 +469,7 @@ impl LNode {
             | BVar { queue, .. }
             | Var { queue, .. } => queue.borrow().clone(),
 
+            //CSC: meglio abortire?
             Type | Kind => VecDeque::new(),
         }
     }
@@ -501,6 +507,7 @@ impl LNode {
             | BVar { parent, .. }
             | Var { parent, .. } => parent.borrow().to_vec(),
 
+            //CSC: bug qui?
             Type | Kind => Vec::new(),
         }
     }
@@ -653,6 +660,7 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
         LNode::App { left, right, .. } => {
             // Recursively weaken the head of the application.
             let left = weak_head(left, rules);
+            // CSC: tante deep_clone
             let left = deep_clone(&mut HashMap::new(), &left);
 
             if let LNode::Abs { bvar, body, .. } = &*left {
@@ -696,7 +704,6 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Option<Rc<LNode>> {
     let size = wnf.size();
     let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-    // TODO: Usare una mappa ((testa, arietà) -> Regola)
     let key = (head_ptr, size);
 
     // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
