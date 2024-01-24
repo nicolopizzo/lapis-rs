@@ -667,9 +667,7 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
                 bvar.subs_to(right);
                 weak_head(body, rules)
             } else {
-                // Sono già in normal form.
-                let right = weak_head(right, rules);
-                LNode::new_app(left, right)
+                LNode::new_app(left, right.clone())
             }
         }
         LNode::BVar {
