@@ -109,6 +109,7 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
 /// Verifies that `term` matches `lhs` up to weakening.
 /// `pattern` is the left hand side of a rewrite rule, so it can only be `{ App, Var, BVar, Abs }`.
 /// `term` must be in whnf.
+/// `pattern` must be in whnf nelle regole di riscrittura
 pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> bool {
     match (&**term, &**pattern) {
         (
@@ -123,11 +124,10 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
                 ..
             },
         ) => {
-            // Il match avviene a meno di whnf.
-            let l1 = weak_head(&l1, rules);
-            let r1 = weak_head(&r1, rules);
-
             let b1 = matches(&l1, &l2, rules);
+
+            // Il match avviene a meno di whnf.
+            let r1 = weak_head(&r1, rules);
             let b2 = matches(&r1, &r2, rules);
             b1 && b2
         }

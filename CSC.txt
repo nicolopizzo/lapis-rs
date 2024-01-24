@@ -14,6 +14,9 @@ cargo test checking::tests::test_hard
 NormaForms = boolean + term option
 ================================
 
+ASSUNZIONI:
+1) lhs patterns are in whnf
+
 1) definizioni = dichiarazioni + rewrite rule!
    parser.rs, line 404
 2) per i Theorem il body non viene controllato!
