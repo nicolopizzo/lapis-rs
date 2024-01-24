@@ -158,11 +158,10 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
             }
         }
         (
-            tterm,
+            _,
             LNode::BVar {
                 subs_to,
                 is_meta,
-                binder: p_binder,
                 ..
             },
         ) => {
@@ -173,20 +172,7 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
 
                 true
             } else {
-                if let LNode::BVar {
-                    binder: tbinder, ..
-                } = tterm
-                {
-                    let b1 = tbinder.borrow().upgrade();
-                    let b2 = p_binder.borrow().upgrade();
-                    match (b1,b2) {
-                     (None, None) => true,
-                     (Some(p1), Some(p2)) => Rc::ptr_eq(&p1,&p2),
-                     _ => false
-                    }
-                } else {
-                    false
-                }
+                Rc::ptr_eq(term,pattern)
             }
         }
         (
