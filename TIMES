@@ -1,0 +1,10 @@
+times cargo run -- examples/matita-light/matita_basics_logic.dk
+Size = 5794459
+## PARSING ONLY
+real	0m0,155s
+user	0m0,135s
+sys	0m0,020s
+## CHECKING, NO EQUALITY
+real	0m0,385s
+user	0m0,335s
+sys	0m0,053s
