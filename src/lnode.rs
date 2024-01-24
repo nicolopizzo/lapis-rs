@@ -18,14 +18,14 @@ use crate::{
     utils::{deep_clone, get_head, matches},
 };
 
-#[derive(Clone)]
+#[derive(Clone,DeepSizeOf)]
 pub struct NormalForms(pub bool, pub Option<Rc<LNode>>);
 
 /// Enum representing a lambda node. Such node can have three forms:
 /// - Application: an application node has two children.
 /// - Abstraction: an abstraction node has one child.
 /// - Variable: this kind of node can represent bound and unbound variables.
-#[derive(Clone)]
+#[derive(Clone,DeepSizeOf)]
 pub enum LNode {
     App {
         left: Rc<Self>,
@@ -722,107 +722,3 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Option<Rc<LNode>> {
 
     None
 }
-
-// impl DeepSizeOf for LNode {
-//     // sommare anche la sizeof di self
-//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-//         match self {
-//             App {
-//                 left,
-//                 right,
-//                 parent,
-//                 undir,
-//                 canonic,
-//                 building,
-//                 queue,
-//             } => {
-//                 left.deep_size_of_children(context)
-//                     + right.deep_size_of_children(context)
-//                     + parent.deep_size_of_children(context)
-//                     + undir.deep_size_of_children(context)
-//                     + canonic.deep_size_of_children(context)
-//                     + building.deep_size_of_children(context)
-//                     + queue.deep_size_of_children(context)
-//             }
-//             Prod {
-//                 bvar,
-//                 body,
-//                 parent,
-//                 undir,
-//                 canonic,
-//                 building,
-//                 queue,
-//             }
-//             | Abs {
-//                 bvar,
-//                 body,
-//                 parent,
-//                 undir,
-//                 canonic,
-//                 building,
-//                 queue,
-//             } => {
-//                 bvar.deep_size_of_children(context)
-//                     + body.deep_size_of_children(context)
-//                     + parent.deep_size_of_children(context)
-//                     + undir.deep_size_of_children(context)
-//                     + canonic.deep_size_of_children(context)
-//                     + building.deep_size_of_children(context)
-//                     + queue.deep_size_of_children(context)
-//             }
-//             BVar {
-//                 binder,
-//                 parent,
-//                 undir,
-//                 canonic,
-//                 building,
-//                 queue,
-//                 subs_to,
-//                 ty,
-//                 normal_forms,
-//                 is_meta,
-//                 symb,
-//             } => {
-//                 binder.deep_size_of_children(context)
-//                     + subs_to.deep_size_of_children(context)
-//                     + parent.deep_size_of_children(context)
-//                     + undir.deep_size_of_children(context)
-//                     + canonic.deep_size_of_children(context)
-//                     + building.deep_size_of_children(context)
-//                     + queue.deep_size_of_children(context)
-//                     + ty.deep_size_of_children(context)
-//                     + is_meta.deep_size_of_children(context)
-//                     + symb.deep_size_of_children(context)
-//                     + normal_forms.deep_size_of_children(context)
-//             }
-//             Var {
-//                 is_meta,
-//                 parent,
-//                 undir,
-//                 canonic,
-//                 building,
-//                 queue,
-//                 ty,
-//                 normal_forms,
-//                 symb,
-//             } => {
-//                 parent.deep_size_of_children(context)
-//                     + undir.deep_size_of_children(context)
-//                     + canonic.deep_size_of_children(context)
-//                     + building.deep_size_of_children(context)
-//                     + queue.deep_size_of_children(context)
-//                     + ty.deep_size_of_children(context)
-//                     + is_meta.deep_size_of_children(context)
-//                     + symb.deep_size_of_children(context)
-//                     + normal_forms.deep_size_of_children(context)
-//             }
-//             Type | Kind => 1,
-//         }
-//     }
-// }
-//
-// impl DeepSizeOf for NormalForms {
-//     fn deep_size_of_children(&self, context: &mut deepsize::Context) -> usize {
-//         self.0.deep_size_of_children(context) + self.1.deep_size_of_children(context)
-//     }
-// }
