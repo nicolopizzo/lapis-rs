@@ -15,6 +15,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::__Deref;
 use log::{error, info, warn};
 
+use deepsize::DeepSizeOf;
+
 use crate::{
     debug,
     lgraph::LGraph,
@@ -66,23 +68,31 @@ pub fn check_context(ctx: &Context) -> Result<()> {
 }
 
 fn check_rule(lhs: &Rc<LNode>, rhs: &Rc<LNode>, rules: &RewriteMap) -> Result<()> {
-    info!("Inferring type for {:?}", lhs);
+    info!("Inferring type for lhs {:?}", lhs);
     let lhs_typ = debug!(type_infer(lhs, rules))?;
     if let Some(lhs_typ) = lhs_typ {
-        info!("Inferred type: {:?}", lhs_typ);
+        info!("Inferred type for lhs: {:?}", lhs_typ);
+        info!("Checking type for rhs {:?}", rhs);
+        info!("Size of rhs {:?}", rhs.deep_size_of());
         type_check(rhs, &lhs_typ, rules)?;
     } else {
         lhs.unsub_meta();
+        info!("Retry: inferring type for rhs {:?}", rhs);
         let rhs_typ = type_infer(rhs, rules)?;
         if let Some(rhs_typ) = rhs_typ {
+            info!("Inferred type for rhs: {:?}", rhs_typ);
+            info!("Checking type for lhs {:?}", lhs);
             type_check(lhs, &rhs_typ, rules)?;
         } else {
             return Err(Error::UnificationNeeded);
         }
     }
+    info!("Rule checking completed");
 
     lhs.unsub_meta();
     rhs.unsub_meta();
+
+    info!("Rule unsubbed"); 
 
     Ok(())
 }
