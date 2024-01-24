@@ -197,7 +197,6 @@ fn parse_rule(rule: &Rule<String, TermType>, ctx: &mut Context, path: &str) -> R
         let typ = term
             .clone()
             .map(|term| new_scope(ctx, &vars, |ctx| map_term(&term, ctx, path)));
-        let vname = path.to_string() + "." + vname;
         let term = LNode::new_meta_var(typ, Some(vname.as_str()));
 
         vars.push((vname.to_owned(), term));

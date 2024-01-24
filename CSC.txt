@@ -14,6 +14,12 @@ cargo test checking::tests::test_hard
 NormaForms = boolean + term option
 ================================
 
+PARSING BUGS:
+1) essere passato ai nomi non qualificati per variabili legate
+   e per le metavariabili ha fissato bug ==> il meccanismo di
+   unbinding o non funziona bene o non è invocato sempre
+
+
 ASSUNZIONI:
 1) lhs patterns are in whnf
 
