@@ -1,0 +1,47 @@
+cargo build
+cargo run -- PARAMS
+cargo test CRATE::SUBCRATE::TEST
+
+cargo run -- examples/matita-light/matita_basics_logic.dk 
+cargo test parser::tests::test_matita
+cargo test checking::tests::test_hard
+
+# no serialization
+# un solo test alla volta (codice "non rientrante")
+# il logging su file funziona solo con i test
+
+================================
+NormaForms = boolean + term option
+================================
+
+1) definizioni = dichiarazioni + rewrite rule!
+   parser.rs, line 404
+2) per i Theorem il body non viene controllato!
+   parser.rs, line 188
+3) new_prod_unbound in lnode è sospetto
+4) nome fuorviante: ridenominare size in arity (e farlo 0 based?)
+5) nome fuorviante: ridenominare parent in parents
+6) Type/Kind non hanno parents
+7) check_context verifica solo le regole (e non le dichiarazioni)
+   e in ordine sparso!
+8) type_check caso lambda anonimo vs tipo ==> che succede quando
+   alle variabili libere del tipo che verranno rilegate da dei pi?
+9) Type non è un singleton (sembra impossibile da fare in Rust
+   perchè gli Rc<LNode> non sono thread safe per internal mutability!)
+10) manca occur check per metavariabili
+
+LENTEZZA:
+* in type inference di applicazione
+ //CSC XXXXYYYY was the cause of slowness: ????   let body = weak_head(body, rules);
+ Ok(Some(body.clone()))
+* // CSC: inefficient, deep_clone repeated multiple times
+  nella right to left dell'applicazione
+* // CSC: inefficient, deep_clone repeated multiple times
+  anche nella weak head della whd
+
+1) parser: ufficio complicazione cose semplici?
+   - si usa un'unica mappa per costanti e variabili
+   - la mappa viene aggiornata per aggiungere/togliere
+     variabili in/out of scope
+   - nel caso di telescopi, in parser.rs ogni volta
+     vengono ritolte e poi rimesse tutte le variabili
