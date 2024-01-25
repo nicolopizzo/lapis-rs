@@ -49,15 +49,19 @@ pub fn check_context(ctx: &Context) -> Result<()> {
             .unwrap()
             .progress_chars("==-");
     bar.set_style(sty);
-    bar.set_message("Checking rules");
+    bar.set_message("Checking constants");
 
     for (name, var) in &decls {
+        bar.inc(1);
+
         let check = check_decl(name, var, rules);
         if let Err(e) = check {
             println!("Couldn't check {:?}", name);
             // return Err(e);
         }
     }
+
+    bar.set_message("Checking rules");
     for Rewrite(lhs, rhs) in &to_check {
         bar.inc(1);
 
@@ -84,6 +88,15 @@ fn check_decl(name: &String, var: &Rc<LNode>, rules: &RewriteMap) -> Result<()> 
          info!("Checking {name} : {:?}", ty);
          check_whd_typeof(ty, |node| node.is_sort(), rules)
      },
+     LNode::BVar { ty, subs_to, .. } => {
+         let ty = ty.borrow();
+         let ty = ty.as_ref().unwrap();
+         info!("Checking {name} : {:?}", ty);
+         check_whd_typeof(ty, |node| node.is_sort(), rules)?;
+         if let Some(bo) = &*subs_to.borrow() {
+             type_check(bo, ty, rules)
+         } else { Ok(()) }
+     }
      _ => panic!("Not a declaration")
     }
 }

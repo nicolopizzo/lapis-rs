@@ -105,28 +105,26 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
 
                 // Save symbol in context.
                 let name = path.to_string() + "." + &name;
-                let term = LNode::new_var(typ, &name);
 
                 // If intro is a definition with `rhs`, then add a new rewrite rule
-                if let Some(rhs) = rhs {
-                    let head = get_head(&term);
-                    let head_ptr = Rc::into_raw(head.clone()) as usize;
+                let var = if let Some(rhs) = rhs {
+                    let body =
+                        // create abstraction if `args` are specified.
+                        if !loc_vars.is_empty() {
+                            loc_vars.iter().rev().fold(rhs.clone(), |body, (_, bvar)|{
+                                LNode::new_abs(bvar.clone(), body)
+                            })
+                        } else {
+                            rhs
+                        };
+                    let node = LNode::new_bvar(typ, Some(&name));
+                    node.subs_to(&body);
+                    node
+                } else {
+                    LNode::new_var(typ, &name)
+                };
 
-                    // create abstraction if `args` are specified.
-                    if !loc_vars.is_empty() {
-                        let rhs = loc_vars.iter().rev().fold(rhs.clone(), |body, (_, bvar)| {
-                            LNode::new_abs(bvar.clone(), body)
-                        });
-
-                        ctx.1
-                            .insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
-                    } else {
-                        ctx.1
-                            .insert((head_ptr, 1), vec![Rewrite(term.clone(), rhs)]);
-                    }
-                }
-
-                ctx.0.insert(name, term);
+                ctx.0.insert(name, var);
             });
         }
         Command::Rules(rules) => {
