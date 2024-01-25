@@ -149,9 +149,22 @@ impl Debug for LNode {
                     f.write_str("?")?;
                 }
                 if let Some(sub) = &*subs_to.borrow() {
-                    f.write_str("[")?;
-                    sub.fmt(f)?;
-                    f.write_str("]")
+                    let sym = symb.as_ref();
+                    let printsub = match sym {
+                        Some(s) => {
+                            f.write_str(s)?;
+                            !s.contains(".")
+                        }
+                        None => {
+                            f.write_str("_")?;
+                            true
+                        }
+                    };
+                    if printsub {
+                      f.write_str("[")?;
+                      sub.fmt(f)?;
+                      f.write_str("]")
+                    } else { Ok(()) }
                 } else if let Some(symb) = symb {
                     f.write_str(symb)
                 } else {
@@ -338,6 +351,14 @@ impl LNode {
             Var { ty, .. } => ty.borrow().clone(),
             BVar { ty, .. } => ty.borrow().clone(),
             _ => None,
+        }
+    }
+
+    pub fn get_sym(&self) -> Option<&str> {
+        match self {
+            Var { symb, .. } => Some(&symb),
+            BVar { symb, .. } => symb.as_ref().map(|x| x.as_str()),
+            _ => panic!("Not a variable"),
         }
     }
 
