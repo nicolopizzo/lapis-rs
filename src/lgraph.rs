@@ -78,7 +78,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
         self.nodes
             .iter()
             .copied()
-            .filter(|x| x.is_bvar() || x.is_var())
+            .filter(|x| x.is_var())
             .collect()
     }
 
@@ -112,13 +112,13 @@ impl<'a, 'b: 'a> LGraph<'a> {
             }
             let n = n.unwrap().upgrade().unwrap();
 
-            // Check parents of n. If n is a `BVar` and is instatiated, use the substitution.
+            // Check parents of n. If n is a `Var` and is instatiated, use the substitution.
             let mut parents: Vec<Option<Rc<LNode>>> =
                 n.get_parent().iter().map(|x| x.upgrade()).collect();
             while let Some(Some(m)) = parents.pop() {
                 // Se `m` è una bvar istanziata, devo ciclare ANCHE sui suoi padri. Conviene utilizzare un loop piuttosto
                 // che un ciclo for, ed utilizzare una coda (inizializzata ai parent di `n`) per inserire i padri.
-                if m.is_bvar() && m.get_sub().is_some() {
+                if m.is_var() && m.get_sub().is_some() {
                     let m_sub = &m.get_sub().unwrap();
                     let m_parent: Vec<_> = m_sub.get_parent().iter().map(|x| x.upgrade()).collect();
                     parents.extend(m_parent);
@@ -185,10 +185,9 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 r1.add_undir(r2);
                 r2.add_undir(r1);
             }
-            (Var { .. }, Var { .. }) => (),
-            (BVar { .. }, BVar { .. }) => {}
+            (Var { .. }, Var { .. }) => {}
             (
-                BVar {
+                Var {
                     subs_to, is_meta, ..
                 },
                 _,
@@ -206,11 +205,11 @@ impl<'a, 'b: 'a> LGraph<'a> {
             }
             (
                 _,
-                BVar {
+                Var {
                     subs_to, is_meta, ..
                 },
             ) => {
-                // TODO: Se la prima `BVar` ha una sostituzione, non per forza la sto confrontando con una BVar
+                // TODO: Se la prima `Var` ha una sostituzione, non per forza la sto confrontando con una Var
                 // Devo quindi effettuare `enqueue_and_propagate` della sostituzione con v.
                 let sub = &mut *subs_to.borrow_mut();
                 if let Some(sub) = sub {
@@ -246,7 +245,7 @@ impl<'a, 'b: 'a> LGraph<'a> {
                 if v.is_var() || w.is_var() {
                     return false;
                 }
-                if let (BVar { binder: b1, .. }, BVar { binder: b2, .. }) = (&**v, &*w) {
+                if let (Var { binder: b1, .. }, Var { binder: b2, .. }) = (&**v, &*w) {
                     let b1 = &b1.borrow().upgrade();
                     let b2 = &b2.borrow().upgrade();
                     match (&b1, &b2) {

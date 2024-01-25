@@ -95,7 +95,7 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                 // for example [n: Nat, v: Vec n].
                 let typ = new_scope(ctx, &loc_vars, |ctx| map_term(&term, ctx, path));
                 let vname = path.to_string() + "." + vname;
-                let term = LNode::new_bvar(Some(typ), Some(vname.as_str()));
+                let term = LNode::new_var(Some(typ), Some(vname.as_str()));
 
                 loc_vars.push((vname.to_owned(), term));
             }
@@ -117,11 +117,11 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                         } else {
                             rhs
                         };
-                    let node = LNode::new_bvar(typ, Some(&name));
+                    let node = LNode::new_var(typ, Some(&name));
                     node.subs_to(&body);
                     node
                 } else {
-                    LNode::new_var(typ, &name)
+                    LNode::new_var(typ, Some(&name))
                 };
 
                 //CSC: do not copy here
@@ -250,7 +250,7 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
             // typ is optional, so it may be None
             let typ = typ.clone().map(|typ| map_term(&typ, ctx, modpath));
             //let name = modpath.to_string() + "." + name;
-            let bvar = LNode::new_bvar(typ, Some(&name));
+            let bvar = LNode::new_var(typ, Some(&name));
 
             vars = vec![(name.to_string(), bvar.clone())];
             // Parse body with bvar in scope
@@ -262,7 +262,7 @@ fn map_term(term: &TermType, ctx: &mut Context, modpath: &str) -> Rc<LNode> {
             let typ = Some(map_term(&typ, ctx, modpath));
             let name = name.as_deref();
             //let name = name.map(|name| modpath.to_string() + "." + name);
-            let bvar = LNode::new_bvar(typ, name.as_deref());
+            let bvar = LNode::new_var(typ, name.as_deref());
 
             let body = if let Some(name) = name {
                 vars = vec![((name.to_string(), bvar.clone()))];

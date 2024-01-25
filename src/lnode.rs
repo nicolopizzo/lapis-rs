@@ -54,7 +54,7 @@ pub enum LNode {
         building: RefCell<bool>,
         queue: RefCell<VecDeque<Weak<Self>>>,
     },
-    BVar {
+    Var {
         binder: RefCell<Weak<Self>>,
         parent: RefCell<Vec<Weak<Self>>>,
         undir: RefCell<Vec<Weak<Self>>>,
@@ -66,17 +66,6 @@ pub enum LNode {
         normal_forms: RefCell<NormalForms>,
         is_meta: bool,
         symb: Option<String>,
-    },
-    Var {
-        is_meta: bool,
-        parent: RefCell<Vec<Weak<Self>>>,
-        undir: RefCell<Vec<Weak<Self>>>,
-        canonic: RefCell<Weak<Self>>,
-        building: RefCell<bool>,
-        queue: RefCell<VecDeque<Weak<Self>>>,
-        ty: RefCell<Option<Rc<Self>>>,
-        normal_forms: RefCell<NormalForms>,
-        symb: String,
     },
     Type,
     Kind,
@@ -117,7 +106,7 @@ impl Debug for LNode {
                 // If on the right I have a substituted bvar, I check the substitution for pretty
                 // printing (if I have something other than variables, open parentheses).
                 let right = &right.get_sub().unwrap_or(right.clone());
-                if !(right.is_bvar() || right.is_var()) {
+                if !(right.is_var()) {
                     f.write_str("(")?;
                     right.fmt(f)?;
                     f.write_str(")")
@@ -126,7 +115,7 @@ impl Debug for LNode {
                 }
             }
             Prod { bvar, body, .. } => {
-                if let BVar { symb, .. } = &**bvar {
+                if let Var { symb, .. } = &**bvar {
                     if symb.is_some() {
                         bvar.fmt(f)?;
                         f.write_str(" : ")?;
@@ -144,7 +133,7 @@ impl Debug for LNode {
                 f.write_str(" -> ")?;
                 body.fmt(f)
             }
-            BVar { subs_to, symb, is_meta, .. } => {
+            Var { subs_to, symb, is_meta, .. } => {
                 if *is_meta {
                     f.write_str("?")?;
                 }
@@ -171,7 +160,6 @@ impl Debug for LNode {
                     f.write_str("_")
                 }
             }
-            Var { symb, .. } => f.write_str(symb),
             Type => f.write_str("Type"),
             Kind => f.write_str("Kind"),
         }
@@ -195,7 +183,6 @@ impl LNode {
             App { parent: p, .. } => p.borrow_mut().push(parent),
             Prod { parent: p, .. } => p.borrow_mut().push(parent),
             Abs { parent: p, .. } => p.borrow_mut().push(parent),
-            BVar { parent: p, .. } => p.borrow_mut().push(parent),
             Var { parent: p, .. } => p.borrow_mut().push(parent),
             Type => (),
             Kind => (),
@@ -220,24 +207,6 @@ impl LNode {
         app
     }
 
-    //CSC: alla bvar non aggiungo il parent?
-    pub fn new_prod_unbound(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
-        let prod = Rc::new(Prod {
-            bvar: bvar.clone(),
-            body: body.clone(),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-        });
-
-        //CSC: alla bvar non aggiungo il parent?
-        body.add_parent(prod.clone());
-
-        prod
-    }
-
     pub fn new_prod(bvar: Rc<Self>, body: Rc<Self>) -> Rc<Self> {
         let prod = Rc::new(Prod {
             bvar: bvar.clone(),
@@ -249,7 +218,7 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
         });
 
-        bvar.bind_to(prod.clone());
+        bvar.bind_to(&prod);
 
         body.add_parent(prod.clone());
 
@@ -267,33 +236,15 @@ impl LNode {
             queue: RefCell::new(Vec::new().into()),
         });
 
-        bvar.bind_to(abs.clone());
+        bvar.bind_to(&abs);
 
         body.add_parent(abs.clone());
 
         abs
     }
 
-    pub fn new_var(ty: Option<Rc<Self>>, symb: &str) -> Rc<Self> {
-        let term = Rc::new(Var {
-            symb: String::from(symb),
-            is_meta: false,
-            ty: RefCell::new(ty),
-            parent: RefCell::new(Vec::new()),
-            undir: RefCell::new(Vec::new()),
-            canonic: RefCell::new(Weak::new()),
-            building: RefCell::new(false),
-            queue: RefCell::new(Vec::new().into()),
-            normal_forms: RefCell::new(NormalForms(false, None)),
-        });
-
-        term.set_canonic(Rc::downgrade(&term));
-
-        term
-    }
-
     pub fn new_meta_var(ty: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
-        Rc::new(BVar {
+        Rc::new(Var {
             symb: symb.map(String::from),
             is_meta: true,
             binder: RefCell::new(Weak::new()),
@@ -308,8 +259,8 @@ impl LNode {
         })
     }
 
-    pub fn new_bvar(ty: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
-        Rc::new(BVar {
+    pub fn new_var(ty: Option<Rc<Self>>, symb: Option<&str>) -> Rc<Self> {
+        Rc::new(Var {
             symb: symb.map(String::from),
             is_meta: false,
             binder: RefCell::new(Weak::new()),
@@ -328,20 +279,16 @@ impl LNode {
         matches!(self, Abs { .. })
     }
 
-    pub(crate) fn is_bvar(&self) -> bool {
-        matches!(self, BVar { .. })
+    pub(crate) fn is_var(&self) -> bool {
+        matches!(self, Var { .. })
     }
 
     pub(crate) fn is_flexible(&self) -> bool {
-        if let BVar { is_meta, subs_to, .. } = self {
+        if let Var { is_meta, subs_to, .. } = self {
             if let Some(bo) = &*subs_to.borrow() {
                 bo.is_flexible()
             } else { *is_meta }
         } else { false }
-    }
-
-    pub(crate) fn is_var(&self) -> bool {
-        matches!(self, Var { .. })
     }
 
     pub(crate) fn is_app(&self) -> bool {
@@ -351,15 +298,13 @@ impl LNode {
     pub fn get_type(&self) -> Option<Rc<Self>> {
         match self {
             Var { ty, .. } => ty.borrow().clone(),
-            BVar { ty, .. } => ty.borrow().clone(),
             _ => None,
         }
     }
 
     pub fn get_sym(&self) -> Option<&str> {
         match self {
-            Var { symb, .. } => Some(&symb),
-            BVar { symb, .. } => symb.as_ref().map(|x| x.as_str()),
+            Var { symb, .. } => symb.as_ref().map(|x| x.as_str()),
             _ => panic!("Not a variable"),
         }
     }
@@ -367,7 +312,6 @@ impl LNode {
     pub fn infer_as(&self, ty_inf: Rc<Self>) {
         match self {
             Var { ty, .. } => *ty.borrow_mut() = Some(ty_inf),
-            BVar { ty, .. } => *ty.borrow_mut() = Some(ty_inf),
             _ => (),
         }
     }
@@ -383,14 +327,14 @@ impl LNode {
     //CSC: nome fuorviante; ridenominare in arity e farla 0-based!
     pub fn size(&self) -> usize {
         match self {
-            BVar { subs_to, .. } => {
+            Var { subs_to, .. } => {
                 let subs = &*subs_to.borrow();
                 match subs {
                     Some(sub) => sub.size(),
                     None => 1,
                 }
             }
-            Var { .. } | Type | Kind => 1,
+            Type | Kind => 1,
             App { left, .. } => left.size() + 1,
             Prod { .. } | Abs { .. } => 1,
         }
@@ -398,10 +342,9 @@ impl LNode {
 
     pub(crate) fn undir(&self) -> Vec<Weak<Self>> {
         match self {
-            App { undir, .. }
+              App { undir, .. }
             | Prod { undir, .. }
             | Abs { undir, .. }
-            | BVar { undir, .. }
             | Var { undir, .. } => undir.borrow().to_vec(),
             Type => Vec::new(),
             Kind => Vec::new(),
@@ -413,7 +356,6 @@ impl LNode {
             App { undir, .. }
             | Prod { undir, .. }
             | Abs { undir, .. }
-            | BVar { undir, .. }
             | Var { undir, .. } => undir.borrow_mut().push(Rc::downgrade(node)),
 
             _ => {}
@@ -425,7 +367,6 @@ impl LNode {
             App { undir, .. }
             | Prod { undir, .. }
             | Abs { undir, .. }
-            | BVar { undir, .. }
             | Var { undir, .. } => *undir.borrow_mut() = Vec::new(),
 
             _ => {}
@@ -437,7 +378,6 @@ impl LNode {
             App { queue, .. }
             | Prod { queue, .. }
             | Abs { queue, .. }
-            | BVar { queue, .. }
             | Var { queue, .. } => *queue.borrow_mut() = Vec::new().into(),
 
             _ => {}
@@ -449,7 +389,6 @@ impl LNode {
             App { canonic, .. }
             | Prod { canonic, .. }
             | Abs { canonic, .. }
-            | BVar { canonic, .. }
             | Var { canonic, .. } => canonic.borrow().clone(),
 
             // The canoic for the sort can only be the sort itself.
@@ -463,7 +402,6 @@ impl LNode {
             App { canonic, .. }
             | Prod { canonic, .. }
             | Abs { canonic, .. }
-            | BVar { canonic, .. }
             | Var { canonic, .. } => *canonic.borrow_mut() = value,
 
             Type | Kind => (),
@@ -475,7 +413,6 @@ impl LNode {
             App { building, .. }
             | Prod { building, .. }
             | Abs { building, .. }
-            | BVar { building, .. }
             | Var { building, .. } => *building.borrow(),
 
             Type | Kind => false,
@@ -487,7 +424,6 @@ impl LNode {
             App { building, .. }
             | Prod { building, .. }
             | Abs { building, .. }
-            | BVar { building, .. }
             | Var { building, .. } => *building.borrow_mut() = b,
             Type | Kind => (),
         }
@@ -498,7 +434,6 @@ impl LNode {
             App { queue, .. }
             | Prod { queue, .. }
             | Abs { queue, .. }
-            | BVar { queue, .. }
             | Var { queue, .. } => queue.borrow().clone(),
 
             //CSC: meglio abortire?
@@ -511,7 +446,6 @@ impl LNode {
             App { queue, .. }
             | Prod { queue, .. }
             | Abs { queue, .. }
-            | BVar { queue, .. }
             | Var { queue, .. } => queue.borrow_mut().push_back(Rc::downgrade(v)),
 
             Type | Kind => (),
@@ -523,7 +457,6 @@ impl LNode {
             App { queue, .. }
             | Prod { queue, .. }
             | Abs { queue, .. }
-            | BVar { queue, .. }
             | Var { queue, .. } => queue.borrow_mut().pop_front(),
 
             Type | Kind => None,
@@ -536,7 +469,6 @@ impl LNode {
             App { parent, .. }
             | Prod { parent, .. }
             | Abs { parent, .. }
-            | BVar { parent, .. }
             | Var { parent, .. } => parent.borrow().to_vec(),
 
             //CSC: bug qui?
@@ -544,10 +476,10 @@ impl LNode {
         }
     }
 
-    /// Binds a `BVar` node to an `Abs` node.
-    pub(crate) fn bind_to(&self, binder: Rc<LNode>) {
+    /// Binds a `Var` node to an `Abs` node.
+    pub(crate) fn bind_to(&self, binder: &Rc<LNode>) {
         let abs = Rc::downgrade(&binder);
-        if let BVar { binder, .. } = self {
+        if let Var { binder, .. } = self {
             *binder.borrow_mut() = abs
         }
     }
@@ -573,8 +505,9 @@ impl LNode {
 
     pub fn subs_to(&self, x: &Rc<Self>) {
         match self {
-            BVar { subs_to, .. } => {
+            Var { subs_to, binder, .. } => {
                 *subs_to.borrow_mut() = Some(x.clone());
+                *binder.borrow_mut() = Weak::new()
             }
 
             _ => unreachable!("You can substitute only a bound variable"),
@@ -583,7 +516,7 @@ impl LNode {
 
     pub fn unsub(&self) {
         match self {
-            BVar { subs_to, .. } => {
+            Var { subs_to, .. } => {
                 *subs_to.borrow_mut() = None;
             }
             App { left, right, .. } => {
@@ -601,7 +534,7 @@ impl LNode {
 
     pub fn unsub_meta(&self) {
         match self {
-            BVar {
+            Var {
                 subs_to, is_meta, ..
             } => {
                 if *is_meta {
@@ -622,27 +555,78 @@ impl LNode {
     }
     pub fn get_sub(&self) -> Option<Rc<Self>> {
         match self {
-            BVar { subs_to, .. } => subs_to.borrow().clone(),
+            Var { subs_to, .. } => subs_to.borrow().clone(),
 
             _ => None,
         }
     }
 
     pub fn bind_to_context(&self) {
-        if let BVar { binder, .. } = self {
+        if let Var { binder, .. } = self {
             *binder.borrow_mut() = Weak::new()
         }
     }
 
     pub fn is_meta(&self) -> bool {
         match self {
-            LNode::BVar { is_meta, .. } => *is_meta,
+            LNode::Var { is_meta, .. } => *is_meta,
             _ => false,
         }
     }
 }
 
+pub fn conversion(t1: &Rc<LNode>, t2: &Rc<LNode>, rules: &RewriteMap) -> bool {
+    let wh1 = weak_head(t1, rules);
+    let wh2 = weak_head(t2, rules);
+    let res = match (&*wh1, &*wh2) {
+        (LNode::Prod { bvar: bvar1, body: body1, .. },
+         LNode::Prod { bvar: bvar2, body: body2, .. })
+      | (LNode::Abs { bvar: bvar1, body: body1, .. },
+         LNode::Abs { bvar: bvar2, body: body2, .. }) => {
+            let LNode::Var { ty: ty1, .. } = &**bvar1 else { panic!("Not a Var") };
+            let LNode::Var { ty: ty2, .. } = &**bvar2 else { panic!("Not a Var") };
+            conversion(ty1.borrow().as_ref().unwrap(),
+                       ty2.borrow().as_ref().unwrap(),
+                       rules) &&
+                  {
+                      bvar1.bind_to_context();
+                      bvar2.bind_to_context();
+                      bvar2.subs_to(bvar1);
+                      let res = conversion(&body1, &body2, rules);
+                      bvar2.unsub();
+                      bvar2.bind_to(&wh2);
+                      bvar1.bind_to(&wh1);
+                      res
+                  }
+         }
+        (LNode::App { left: l1, right: r1, .. },
+         LNode::App { left: l2, right: r2, .. }) => {
+            conversion(&l1, &l2, rules) &&
+            conversion(&r1, &r2, rules)
+         }
+        (LNode::Type, LNode::Type) => true,
+        (LNode::Kind, LNode::Kind) => true,
+        (v1 @ LNode::Var { subs_to: s1, .. }, v2 @ LNode::Var { subs_to: s2, .. }) => {
+            assert!(s1.borrow().is_none());
+            assert!(s2.borrow().is_none());
+            let res = std::ptr::eq(v1,v2);
+            //if !res { println!("CONVERSION FAILURE1: {:?} === {:?}", t1, t2) };
+            //if !res { println!("CONVERSION FAILURE2: {:?} === {:?}", v1, v2) };
+            res
+        }
+        _ => {
+            false
+        }
+    };
+    if res == false {
+        println!("CONVERSION FAILURE: {:?} === {:?}", t1, t2);
+        println!("REDUCED TO: {:?} === {:?}", wh1, wh2);
+    } ;
+    res
+}
+
 pub fn snf(term: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
+    //println!("SNF OF {:?}", term);
     let term = weak_head(term, rules);
     match &*term {
         LNode::Prod { bvar, body, .. } => {
@@ -660,7 +644,7 @@ pub fn snf(term: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
             let right = snf(right, rules);
             LNode::new_app(left, right)
         }
-        LNode::BVar {
+        LNode::Var {
             subs_to,
             normal_forms,
             ..
@@ -676,7 +660,7 @@ pub fn snf(term: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
                 snf_term
             })
         }
-        LNode::BVar { ty, .. } => {
+        LNode::Var { ty, .. } => {
             let ty_b = ty.borrow().clone();
             let ty_b = ty_b.map(|ty| snf(&ty, rules));
             *ty.borrow_mut() = ty_b;
@@ -702,7 +686,7 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
                 rewrite_to(&LNode::new_app(left, right.clone()), rules)
             }
         }
-        LNode::BVar {
+        LNode::Var {
             subs_to,
             normal_forms,
             ..
@@ -741,7 +725,9 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
     if let Some(rew) = rew {
         for Rewrite(lhs, rhs) in rew {
             info!("to be rewritten: {:?}", wnf);
+            //println!("to be rewritten: {:?}", wnf);
             info!("rewriting trying {:?} -----------------> {:?}", lhs, rhs);
+            //println!("rewriting trying {:?} -----------------> {:?}", lhs, rhs);
             let mut subs = HashMap::new();
             let lhs = deep_clone(&mut subs, lhs);
             let rhs = deep_clone(&mut subs, rhs);
@@ -749,10 +735,12 @@ fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
             // Mi mantengo un campo booleano per le metavariabili
             if matches(wnf, &lhs, rules) {
                 let res = weak_head(&rhs, rules);
-                info!("rewriting succesfull to {:?}",res);
+                info!("rewriting succesfull to {:?} for head {:?}",res,head);
+                //println!("rewriting succesfull to {:?} for head {:?}",res,head);
                 return res;
             } else {
-                info!("rewriting failed");
+                info!("rewriting failed for head {:?}", head);
+                //println!("rewriting failed for head {:?}", head);
             }
         }
     }

@@ -20,7 +20,7 @@ use deepsize::DeepSizeOf;
 use crate::{
     debug,
     lgraph::LGraph,
-    lnode::{snf, weak_head, LNode, NormalForms},
+    lnode::{snf, weak_head, LNode, NormalForms, conversion},
     parser::{Context, Rewrite, RewriteMap},
     utils::{deep_clone, get_head},
 };
@@ -69,11 +69,11 @@ pub fn check_context(ctx: &Context) -> Result<()> {
         // For debug purposes.
         // File::create("../../log/output.log").unwrap();
 
-        let check = check_rule(lhs, rhs, rules);
-        if let Err(e) = check {
-            println!("Couldn't check {:?}", lhs);
-            // return Err(e);
-        }
+        //let check = check_rule(lhs, rhs, rules);
+        //if let Err(e) = check {
+            //println!("Couldn't check {:?}", lhs);
+            //// return Err(e);
+        //}
     }
 
     bar.finish_with_message("Check completed.");
@@ -83,25 +83,18 @@ pub fn check_context(ctx: &Context) -> Result<()> {
 
 fn check_decl(name: &String, var: &Rc<LNode>, rules: &RewriteMap) -> Result<()> {
     match &**var {
-     LNode::Var { ty, .. } => {
-         let ty = ty.borrow();
-         let ty = ty.as_ref().unwrap();
-         info!("Checking {name} : {:?}", ty);
-         //println!("Checking {name} : {:?}\n", ty);
-         check_whd_typeof(ty, |node| node.is_sort(), rules)
-     },
-     LNode::BVar { ty, subs_to, .. } => {
-         let ty = ty.borrow();
-         let ty = ty.as_ref().unwrap();
-         info!("Checking {name} : {:?}", ty);
-         //println!("Checking {name} : {:?}\n", ty);
-         check_whd_typeof(ty, |node| node.is_sort(), rules)?;
-         if let Some(bo) = &*subs_to.borrow() {
-             type_check(bo, ty, rules)
-             //Ok(())
-         } else { Ok(()) }
-     }
-     _ => panic!("Not a declaration")
+        LNode::Var { ty, subs_to, .. } => {
+            let ty = ty.borrow();
+            let ty = ty.as_ref().unwrap();
+            info!("Checking {name} : {:?}", ty);
+            //println!("Checking {name} : {:?}\n", ty);
+            check_whd_typeof(ty, |node| node.is_sort(), rules)?;
+            if let Some(bo) = &*subs_to.borrow() {
+                //type_check(bo, ty, rules)
+                Ok(())
+            } else { Ok(()) }
+        }
+        _ => panic!("Not a declaration")
     }
 }
 
@@ -151,13 +144,13 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             let left_ty_whd = weak_head(&left_ty, rules);
             //println!("POST-ERROR WHD {:?}", left_ty_whd);
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
-            // Posso anche sharare le parti dell'albero che non contengono `BVar`.
+            // Posso anche sharare le parti dell'albero che non contengono `Var`.
             // CSC: inefficient, copy repeated multiple times
             let left_ty_whd = deep_clone(&mut HashMap::new(), &left_ty_whd);
 
             if let LNode::Prod { bvar, body, .. } = &*left_ty_whd {
                 // check equality between left and `right_ty`
-                let bvar_ty = bvar.get_type().expect("BVar must be typed in Product");
+                let bvar_ty = bvar.get_type().expect("Var must be typed in Product");
                 type_check(right, &bvar_ty, rules)?;
 
                 // substitute occurrences of `bvar` in `body` with `right`
@@ -179,13 +172,12 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             let bvar_ty = bvar.get_type();
             if bvar_ty.is_none() {
                 panic!("Inferring type of untyped abstraction");
-                //CSC: return Ok(None);
             }
             let bvar_ty = bvar_ty.unwrap();
             check_whd_typeof(&bvar_ty, |node| node.is_sort(), rules)?;
 
             // Porzione di codice nuova
-            let xnew = LNode::new_bvar(Some(bvar_ty.clone()), Some("x'"));
+            let xnew = LNode::new_var(Some(bvar_ty.clone()), bvar.get_sym());
             bvar.subs_to(&xnew);
 
             let body_ty = type_infer(body, rules)?;
@@ -198,18 +190,21 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             check_whd_typeof(&body_ty.clone(), |node| node.is_sort(), rules)?;
 
             bvar.unsub();
+            bvar.bind_to(node);
             let prod = LNode::new_prod(xnew, body_ty);
             Ok(Some(prod))
         }
-        LNode::BVar { ty, .. } | LNode::Var { ty, .. } => Ok(ty.borrow().clone()),
+        LNode::Var { ty, .. } => Ok(ty.borrow().clone()),
         LNode::Prod { bvar, body, .. } => {
             let bvar_ty = bvar.get_type().expect("Variable is not typed.");
             check_whd_typeof(&bvar_ty, |node| node.is_sort(), rules)?;
 
+            bvar.bind_to_context();
             let body_ty = type_infer(body, rules)?;
             if body_ty.is_none() {
                 panic!("Untyped body of a product");
             }
+            bvar.bind_to(node);
 
             let body_ty = body_ty.unwrap();
             let wnf_body_ty = weak_head(&body_ty, rules);
@@ -217,7 +212,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 info!("ERROR: Sort Expected");
                 return Err(Error::SortExpected)
             }
-
+            // CSC: restituire la wnf?
             Ok(Some(body_ty))
         }
         LNode::Type => Ok(Some(Rc::new(LNode::Kind))),
@@ -246,7 +241,7 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
             } = &*typ_exp
             {
                 let bvar_ty = lbvar.get_type();
-                let pbvar_typ_exp = pbvar.get_type().expect("BVar in prod must be typed");
+                let pbvar_typ_exp = pbvar.get_type().expect("Var in prod must be typed");
 
                 if let Some(typ) = bvar_ty {
                     // if `typ` is not convertible to `typ_exp`, fail.
@@ -261,21 +256,20 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
                 }
 
                 pbvar.bind_to_context();
+                lbvar.bind_to_context();
                 lbvar.subs_to(pbvar);
 
                 type_check(lbody, pbody, rules)?;
 
                 lbvar.unsub();
-                pbvar.bind_to(typ_exp.clone());
+                lbvar.bind_to(&term);
+                pbvar.bind_to(&typ_exp);
             } else {
                 info!("ERROR ProductExpected");
                 return Err(Error::ProductExpected);
             }
         }
         LNode::Var { ty, .. } if ty.borrow().is_none() => {
-            *ty.borrow_mut() = Some(typ_exp.clone());
-        }
-        LNode::BVar { ty, is_meta, .. } if ty.borrow().is_none() => {
             *ty.borrow_mut() = Some(typ_exp.clone());
         }
         _ => {
@@ -312,18 +306,26 @@ where
 }
 
 fn equality_check(r1: &Rc<LNode>, r2: &Rc<LNode>, rules: &RewriteMap) -> bool {
-    let (r1_snf, t1) = timing(|| snf(r1, rules));
-    let (r2_snf, t2) = timing(|| snf(r2, rules));
-
-    let g = LGraph::from_roots(&r1_snf, &r2_snf);
-
-    let subs = &mut HashMap::new();
-    let r1_snf = deep_clone(subs, &r1_snf);
-    let r2_snf = deep_clone(subs, &r2_snf);
-
-    let (check_res, time) = timing(|| g.blind_check().is_ok() && g.var_check());
-
-    check_res
+    //println!("EQ CHECK {:?} === {:?}", r1, r2);
+    //let (r1_snf, t1) = timing(|| snf(r1, rules));
+    //let (r2_snf, t2) = timing(|| snf(r2, rules));
+    let res = conversion(r1,r2,rules);
+    if res==false { println!("EQ CHECK FAILED {:?} === {:?}", r1, r2) };
+    res
+//
+//    let g = LGraph::from_roots(&r1_snf, &r2_snf);
+//
+//    let subs = &mut HashMap::new();
+//    let r1_snf = deep_clone(subs, &r1_snf);
+//    let r2_snf = deep_clone(subs, &r2_snf);
+//
+//    let (check_res, time) = timing(|| g.blind_check().is_ok() && g.var_check());
+//
+//    let s1 = r1.deep_size_of();
+//    let s2 = r2.deep_size_of();
+//    //println!("s1={} s2={}", s1, s2);
+//
+//    check_res
 }
 
 fn check_whd_typeof<F>(node: &Rc<LNode>, pred: F, rules: &RewriteMap) -> Result<()>

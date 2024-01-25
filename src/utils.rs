@@ -58,7 +58,9 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
                     return node.clone();
                 }
 
-                LNode::new_prod(bvar_new, body_new)
+                let res = LNode::new_prod(bvar_new.clone(), body_new);
+                bvar_new.bind_to(&res);
+                res
             }
             LNode::Abs { bvar, body, .. } => {
                 let bvar_new = deep_clone(subs, bvar);
@@ -67,19 +69,24 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
                     return node.clone();
                 }
 
-                LNode::new_abs(bvar_new, body_new)
+                let res = LNode::new_abs(bvar_new.clone(), body_new);
+                bvar_new.bind_to(&res);
+                res
             }
 
-            LNode::BVar {
+            LNode::Var {
                 subs_to,
                 ty,
                 symb,
                 is_meta,
+                binder,
                 ..
             } => {
                 let sub = &subs_to.borrow();
-                if sub.is_some() {
-                    // Se c'è una sostituzione esplicita effettuo sharing
+                if sub.is_some() ||
+                   (!is_meta && binder.borrow().upgrade().is_none()) {
+                    // Se c'è una sostituzione o è una variabile libera
+                    // effettuo sharing
                     node.clone()
 
                 } else {
@@ -91,13 +98,12 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
                     if *is_meta {
                         LNode::new_meta_var(ty, symb)
                     } else {
-                        // Must share bvar???
-                        LNode::new_bvar(ty, symb)
+                        LNode::new_var(ty, symb)
                     }
                 }
             }
 
-            // Var, Type and Kind can be shared
+            // Type and Kind can be shared
             _ => node.clone(),
         };
         subs.insert(node_ptr, new_node.clone());
@@ -111,6 +117,7 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
 /// `term` must be in whnf, unless we know that the pattern is an uninstantiated meta-variable
 /// `pattern` must be in whnf nelle regole di riscrittura
 pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> bool {
+    let res =
     match (&**term, &**pattern) {
         (
             LNode::App {
@@ -144,14 +151,14 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
          *    il match dei binder. In questo caso non li istanzio. Faccio puntare un puntatore con
          *    .canonic() i binder.
          * */
-        (LNode::BVar { subs_to, .. }, _) if subs_to.borrow().is_some() => {
+        (LNode::Var { subs_to, .. }, _) if subs_to.borrow().is_some() => {
             match &*subs_to.borrow() {
                 Some(subs) => matches(subs, pattern, rules),
                 None => unreachable!(),
             }
         }
 
-        (_, LNode::BVar { subs_to, .. }) if subs_to.borrow().is_some() => {
+        (_, LNode::Var { subs_to, .. }) if subs_to.borrow().is_some() => {
             match &*subs_to.borrow() {
                 Some(subs) => matches(term, subs, rules),
                 None => unreachable!(),
@@ -159,7 +166,7 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
         }
         (
             _,
-            LNode::BVar {
+            LNode::Var {
                 subs_to,
                 is_meta,
                 ..
@@ -172,28 +179,39 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
 
                 true
             } else {
-                Rc::ptr_eq(term,pattern)
+                let res = Rc::ptr_eq(term,pattern);
+                //if !res { println!("VAR/VAR FAILURE: {:?}", std::ptr::eq(term,pattern)); };
+                res
             }
         }
-        (
-            LNode::Prod {
-                bvar: l1, body: b1, ..
-            },
-            LNode::Prod {
-                bvar: l2, body: b2, ..
-            },
-        ) => matches(&l1, &l2, rules) && matches(&b1, &b2, rules),
-        (
-            LNode::Abs {
-                bvar: l1, body: b1, ..
-            },
-            LNode::Abs {
-                bvar: l2, body: b2, ..
-            },
-        ) => matches(&l1, &l2, rules) && matches(&b1, &b2, rules),
+        ( LNode::Prod { bvar: bvar1, body: body1, ..  },
+          LNode::Prod { bvar: bvar2, body: body2, ..  } )
+      | ( LNode::Abs { bvar: bvar1, body: body1, ..  },
+          LNode::Abs { bvar: bvar2, body: body2, ..  },) => {
+            //CSC: Code cut&paste from conversion and other places
+            let LNode::Var { ty: ty1, .. } = &**bvar1 else { panic!("Not a Var") };
+            let LNode::Var { ty: ty2, .. } = &**bvar2 else { panic!("Not a Var") };
+            (ty2.borrow().as_ref().is_none() ||
+             matches(ty1.borrow().as_ref().unwrap(),
+                      ty2.borrow().as_ref().unwrap(),
+                      rules))
+            &&
+                {
+                    bvar1.bind_to_context();
+                    bvar2.bind_to_context();
+                    bvar2.subs_to(bvar1);
+                    let res = matches(&body1, &body2, rules);
+                    bvar2.unsub();
+                    bvar2.bind_to(&pattern);
+                    bvar1.bind_to(&term);
+                    res
+                }
+          }
         // Constant variables, sorts.
         (LNode::Type, LNode::Type) => true,
         (LNode::Kind, LNode::Kind) => true,
         _ => Rc::ptr_eq(term,pattern)
     }
+    //; if !res { println!("MATCH FAILURE: {:?} === {:?}", term, pattern); }; res
+    ; res
 }

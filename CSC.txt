@@ -21,6 +21,13 @@ PARSING BUGS:
    e per le metavariabili ha fissato bug ==> il meccanismo di
    unbinding o non funziona bene o non è invocato sempre
 
+BIG BUG:
+1) quando libero una variabile legata, questa da BVar deve diventare
+   una Var per non essere clonata
+2) deep_clone potrebbe non clonare binder "chiusi" rispetto alle
+   variabili da clonare
+3) cambiare tipo di dato var in: o ha il binder, o la sub, o è libera
+   per il fatto che sia meta?
 
 ASSUNZIONI:
 1) lhs patterns are in whnf
