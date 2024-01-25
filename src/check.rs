@@ -39,11 +39,11 @@ type Result<T> = std::result::Result<T, Error>;
 static mut OPEN_DEBUG: usize = 0;
 
 pub fn check_context(ctx: &Context) -> Result<()> {
-    let Context(gamma, rules) = ctx;
-    let decls = gamma.iter().collect::<Vec<_>>();
+    let Context(gamma, rules, names) = ctx;
     let to_check = rules.iter().flat_map(|(_, x)| x).collect::<Vec<_>>();
 
-    let bar = ProgressBar::new(to_check.len() as u64 + decls.len() as u64);
+    assert_eq!(gamma.len(), names.len());
+    let bar = ProgressBar::new(names.len() as u64 + to_check.len() as u64);
     let sty =
         ProgressStyle::with_template("[ {elapsed_precise} ] {bar:40} {pos:>7}/{len:<7} {msg}")
             .unwrap()
@@ -51,9 +51,10 @@ pub fn check_context(ctx: &Context) -> Result<()> {
     bar.set_style(sty);
     bar.set_message("Checking constants");
 
-    for (name, var) in &decls {
+    for name in names.iter() {
         bar.inc(1);
 
+        let var = gamma.get(name).unwrap();
         let check = check_decl(name, var, rules);
         if let Err(e) = check {
             println!("Couldn't check {:?}", name);
@@ -86,15 +87,18 @@ fn check_decl(name: &String, var: &Rc<LNode>, rules: &RewriteMap) -> Result<()> 
          let ty = ty.borrow();
          let ty = ty.as_ref().unwrap();
          info!("Checking {name} : {:?}", ty);
+         //println!("Checking {name} : {:?}\n", ty);
          check_whd_typeof(ty, |node| node.is_sort(), rules)
      },
      LNode::BVar { ty, subs_to, .. } => {
          let ty = ty.borrow();
          let ty = ty.as_ref().unwrap();
          info!("Checking {name} : {:?}", ty);
+         //println!("Checking {name} : {:?}\n", ty);
          check_whd_typeof(ty, |node| node.is_sort(), rules)?;
          if let Some(bo) = &*subs_to.borrow() {
              type_check(bo, ty, rules)
+             //Ok(())
          } else { Ok(()) }
      }
      _ => panic!("Not a declaration")

@@ -37,7 +37,7 @@ pub type GammaMap = HashMap<String, Rc<LNode>>;
 pub type RewriteMap = HashMap<(usize, usize), Vec<Rewrite>>;
 
 #[derive(Debug, Clone, DeepSizeOf)]
-pub struct Context(pub GammaMap, pub RewriteMap);
+pub struct Context(pub GammaMap, pub RewriteMap, pub Vec<String>);
 
 lazy_static! {
     static ref OPEN_FILES: Mutex<HashSet<String>> = Mutex::new(HashSet::new());
@@ -49,7 +49,7 @@ type Command = dedukti_parse::Command<String, String, TermType>;
 type ParseResult = Result<Command>;
 
 pub fn parse(filepath: &str) -> Context {
-    let mut ctx = Context(HashMap::new(), HashMap::new());
+    let mut ctx = Context(HashMap::new(), HashMap::new(), Vec::new());
     parse_file(filepath, &mut ctx);
 
     ctx
@@ -124,7 +124,10 @@ fn parse_command(cmd: &Command, path: &str, ctx: &mut Context) {
                     LNode::new_var(typ, &name)
                 };
 
+                //CSC: do not copy here
+                let namecopy = "".to_owned() + &name;
                 ctx.0.insert(name, var);
+                ctx.2.push(namecopy);
             });
         }
         Command::Rules(rules) => {

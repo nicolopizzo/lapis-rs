@@ -8,6 +8,11 @@ sys	0m0,020s
 real	0m0,256s
 user	0m0,222s
 sys	0m0,033s
+## SNF, IGNORANDO I CORPI
+real	0m43,106s
+user	0m40,952s
+sys	0m2,187s
+
 
 ==================================================================
 
