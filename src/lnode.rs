@@ -334,7 +334,9 @@ impl LNode {
 
     pub(crate) fn is_flexible(&self) -> bool {
         if let BVar { is_meta, subs_to, .. } = self {
-            *is_meta && subs_to.borrow().is_none()
+            if let Some(bo) = &*subs_to.borrow() {
+                bo.is_flexible()
+            } else { *is_meta }
         } else { false }
     }
 
