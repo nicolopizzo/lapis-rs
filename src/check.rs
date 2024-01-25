@@ -131,7 +131,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             let left_ty = left_ty.unwrap();
 
             //println!("PRE-ERROR WHD {:?}", left_ty);
-            let left_ty_whd = weak_head(&left_ty, rules);
+            let left_ty_whd = weak_head(&left_ty, Vec::new(), rules);
             //println!("POST-ERROR WHD {:?}", left_ty_whd);
             // Copio ricorsivamente il grafo, ma sharare le sostituzioni esplicite già esistenti
             // Posso anche sharare le parti dell'albero che non contengono `BVar`.
@@ -196,7 +196,7 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
             }
 
             let body_ty = body_ty.unwrap();
-            let wnf_body_ty = weak_head(&body_ty, rules);
+            let wnf_body_ty = weak_head(&body_ty, Vec::new(), rules);
             if !wnf_body_ty.is_sort() {
                 info!("ERROR: Sort Expected");
                 return Err(Error::SortExpected)
@@ -222,7 +222,7 @@ fn type_check(term: &Rc<LNode>, typ_exp: &Rc<LNode>, rules: &RewriteMap) -> Resu
             body: lbody,
             ..
         } => {
-            let typ_exp = weak_head(&typ_exp, rules);
+            let typ_exp = weak_head(&typ_exp, Vec::new(), rules);
             if let LNode::Prod {
                 bvar: pbvar,
                 body: pbody,
@@ -320,7 +320,7 @@ where
     }
 
     let ty = ty.unwrap();
-    let ty = weak_head(&ty, rules);
+    let ty = weak_head(&ty, Vec::new(), rules);
     if pred(&ty) {
         Ok(())
     } else {

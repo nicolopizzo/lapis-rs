@@ -665,18 +665,26 @@ pub fn snf(term: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
 }
 
 pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
-    match &**node {
-        LNode::App { left, right, .. } => {
-            // Recursively weaken the head of the application.
-            let left = weak_head(left, rules);
-            // CSC: tante deep_clone
-            let left = deep_clone(&mut HashMap::new(), &left);
+    let head = decompose(node,Vec::new());
+    weak_head_aux(head, args, rules)
+}
 
-            if let LNode::Abs { bvar, body, .. } = &*left {
-                bvar.subs_to(right);
-                weak_head(body, rules)
+// It returns the new head and updates the args imperatively
+pub fn weak_head_aux(head: &Rc<LNode>, args: Vec<Rc<LNode>>, rules: &RewriteMap) -> Rc<LNode> {
+    match &**head {
+        LNode::App { .. } => { panic!("Not decomposed"); }
+        LNode::Abs {..} => {
+            if args.is_empty() {
+                *head
             } else {
-                rewrite_to(&LNode::new_app(left, right.clone()), rules)
+                let head = deep_clone(&mut HashMap::new(), &head);
+                let right = args.pop().unwrap();
+                if let LNode::Abs { bvar, body, .. } = &*head {
+                    bvar.subs_to(&right);
+                    weak_head_aux(body, args, rules)
+                } else {
+                    panic!("Impossible");
+                }
             }
         }
         LNode::BVar {
@@ -690,49 +698,54 @@ pub fn weak_head(node: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
                let sub = subs.as_ref().unwrap();
                let NormalForms(wnf_computed, snf) = normal_forms.borrow().clone();
                if wnf_computed {
-                   sub.clone()
+                   // CSC: re-decomposition here, not a good idea
+                   let head = decompose(&sub.clone(), args);
+                   rewrite_to(head, args, rules)
                } else {
-                   let wnf = weak_head(&sub, rules);
+                   let args' = Vec::new();
+                   let wnf = weak_head(&sub, args', rules);
                    *normal_forms.borrow_mut() = NormalForms(true, snf);
                    *subs = Some(wnf.clone());
-                   wnf
+                   rewrite_to(&wnf, args, rules)
                }
             } else {
-                rewrite_to(node, rules)
+                rewrite_to(head, args, rules)
             }
         }
-        _ => rewrite_to(node, rules)
+        _ => rewrite_to(head, args, rules)
     }
 }
 
-fn rewrite_to(wnf: &Rc<LNode>, rules: &RewriteMap) -> Rc<LNode> {
+fn rewrite_to(wnf: &Rc<LNode>, args: Vec<Rc<LNode>>, rules: &RewriteMap) -> Rc<LNode> {
     let head = get_head(wnf);
     let size = wnf.size();
     let head_ptr = Rc::into_raw(head.clone()) as usize;
 
-    let key = (head_ptr, size);
+    for size in 1..=1+args.len() {
+        let key = (head_ptr, size);
 
-    // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
-    // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
-    let rew = rules.get(&key);
-    if let Some(rew) = rew {
-        for Rewrite(lhs, rhs) in rew {
-            info!("to be rewritten: {:?}", wnf);
-            info!("rewriting trying {:?} -----------------> {:?}", lhs, rhs);
-            let mut subs = HashMap::new();
-            let lhs = deep_clone(&mut subs, lhs);
-            let rhs = deep_clone(&mut subs, rhs);
+        // For each possible rewrite rule, check if `wnf` matches with `lhs`. If `wnf` cannot be
+        // rewritten to anything, the for is skipped (`&Vec::new()`) and `wnf` is returned.
+        let rew = rules.get(&key);
+        if let Some(rew) = rew {
+            for Rewrite(lhs, rhs) in rew {
+                info!("to be rewritten: {:?}", wnf);
+                info!("rewriting trying {:?} -----------------> {:?}", lhs, rhs);
+                let mut subs = HashMap::new();
+                let lhs = deep_clone(&mut subs, lhs);
+                let rhs = deep_clone(&mut subs, rhs);
 
-            // Mi mantengo un campo booleano per le metavariabili
-            if matches(wnf, &lhs, rules) {
-                let res = weak_head(&rhs, rules);
-                info!("rewriting succesfull to {:?}",res);
-                return res;
-            } else {
-                info!("rewriting failed");
+                // Mi mantengo un campo booleano per le metavariabili
+                if let Some(argsleft) = matches(wnf, args, &lhs, rules) {
+                    let res = weak_head_aux(&rhs, argsleft, rules);
+                    info!("rewriting succesfull to {:?}",res);
+                    return res;
+                } else {
+                    info!("rewriting failed");
+                }
             }
         }
     }
 
-    wnf.clone()
+    args.iter().fold(wnf.clone(), |acc, term| { LNode::new_app(acc, *term) })
 }

@@ -106,54 +106,35 @@ pub fn deep_clone(subs: &mut HashMap<usize, Rc<LNode>>, node: &Rc<LNode>) -> Rc<
     }
 }
 
+// Returns the new head and updates args in place
+// It does not open substituted vars to allow to record the wnf
+fn decompose(term: &Rc<LNode>, args: Vec<Rc<LNode>>) -> &Rc<LNode> {
+    let mut head = term;
+    while let LNode::App {left, right, ..} = &**head => {
+        args.push(*right);
+        head = left;
+    }
+    head
+}
+///
 /// Verifies that `term` matches `lhs` up to weakening.
 /// `pattern` is the left hand side of a rewrite rule, so it can only be `{ App, Var, BVar, Abs }`.
 /// `term` must be in whnf, unless we know that the pattern is an uninstantiated meta-variable
 /// `pattern` must be in whnf nelle regole di riscrittura
-pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> bool {
-    match (&**term, &**pattern) {
-        (
-            LNode::App {
-                left: l1,
-                right: r1,
-                ..
-            },
-            LNode::App {
-                left: l2,
-                right: r2,
-                ..
-            },
-        ) => {
-            let b1 = matches(&l1, &l2, rules);
+pub fn matches(term: &Rc<LNode>, args: Vec<Rc<LNode>>, pattern: &Rc<LNode>, rules: &RewriteMap) -> Option<Vec<Rc<LNode>>> {
+    let (phead, pargs) = decompose(pattern);
+    matches_aux(term, args, phead, pargs, rules)
+}
 
-            let b2 = if r2.is_flexible() {
-                matches(r1, &r2, rules)
-            } else {
-                //info!("### NON FLEXIBLE PATTERN {:?} FORCING EVALUATION OF {:?}", r2, r1);
-                let r1 = weak_head(&r1, rules);
-                matches(&r1, &r2, rules)
-            };
-            b1 && b2
-        }
-
-        /*
-         * 1. Devo distinguere metavariabili da variabili bound. Le variabili bound non si
-         *    istanziano.
-         * 2. Se è una metavar già istanziata => verifico l'alpha-eq tra termine e sostituito.
-         * 3. Se è bound (variabile in lambda) deve essre bound dall'altra. Verifico con binder()
-         *    il match dei binder. In questo caso non li istanzio. Faccio puntare un puntatore con
-         *    .canonic() i binder.
-         * */
+/// Verifies that `term` matches `lhs` up to weakening.
+/// `pattern` is the left hand side of a rewrite rule, so it can only be `{ App, Var, BVar, Abs }`.
+/// `term` must be in whnf, unless we know that the pattern is an uninstantiated meta-variable
+/// `pattern` must be in whnf nelle regole di riscrittura
+pub fn matches_aux(term: &Rc<LNode>, args: Vec<Rc<LNode>>, phead: &Rc<LNode>, pargs: Vec<Rc<LNode>>, rules: &RewriteMap) -> Option<Vec<Rc<LNode>>> {
+    match (&**term, &**phead) {
         (LNode::BVar { subs_to, .. }, _) if subs_to.borrow().is_some() => {
             match &*subs_to.borrow() {
-                Some(subs) => matches(subs, pattern, rules),
-                None => unreachable!(),
-            }
-        }
-
-        (_, LNode::BVar { subs_to, .. }) if subs_to.borrow().is_some() => {
-            match &*subs_to.borrow() {
-                Some(subs) => matches(term, subs, rules),
+                Some(subs) => QUI DEVO FARE DECOMPOSE! MA SE SONO COME INVARIANTE IN WHD QUESTO CASO NON SERVE! matches_aux(subs, args, phead, pargs, rules),
                 None => unreachable!(),
             }
         }
@@ -165,6 +146,7 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
                 ..
             },
         ) => {
+            XXX: cattura tutti gli args e amen
             // occur_check(metavar, term); ==> verifica che nel termine non ci sia metavar.
             // se il check fallisce => panic();
             if *is_meta {
@@ -175,25 +157,25 @@ pub fn matches(term: &Rc<LNode>, pattern: &Rc<LNode>, rules: &RewriteMap) -> boo
                 Rc::ptr_eq(term,pattern)
             }
         }
-        (
-            LNode::Prod {
-                bvar: l1, body: b1, ..
-            },
-            LNode::Prod {
-                bvar: l2, body: b2, ..
-            },
-        ) => matches(&l1, &l2, rules) && matches(&b1, &b2, rules),
-        (
-            LNode::Abs {
-                bvar: l1, body: b1, ..
-            },
-            LNode::Abs {
-                bvar: l2, body: b2, ..
-            },
-        ) => matches(&l1, &l2, rules) && matches(&b1, &b2, rules),
-        // Constant variables, sorts.
-        (LNode::Type, LNode::Type) => true,
-        (LNode::Kind, LNode::Kind) => true,
-        _ => Rc::ptr_eq(term,pattern)
+        (LNode::Prod { bvar: l1, body: b1, ..  }, LNode::Prod { bvar: l2, body: b2, ..  }
+        ) => { assert!(args.is_empty() && pargs.is_empty()); TERMINI NON IN WHD! matches(&l1, &l2, rules) && matches(&b1, &b2, rules) },
+        (LNode::Abs { bvar: l1, body: b1, ..  }, LNode::Abs { bvar: l2, body: b2, ..  }
+        ) => { assert!(args.is_empty() && pargs.is_empty()); TERMINI NON IN WHD! matches(&l1, &l2, rules) && matches(&b1, &b2, rules) },
+        (LNode::Type, LNode::Type) => { assert!(args.is_empty() && pargs.is_empty()); true },
+        (LNode::Kind, LNode::Kind) => { assert!(args.is_empty() && pargs.is_empty()); true },
+        // Variables
+        _ => { assert!(pargs.is_empty()); Rc::ptr_eq(term,pattern) }
+    }
+
+    if arg.len() < parg.len() { return None };
+    for (arg, parg) in args.iter().zip(pargs.iter()) {
+        let res =if parg.is_flexible() {
+            matches(r1, &r2, rules)
+        } else {
+            //info!("### NON FLEXIBLE PATTERN {:?} FORCING EVALUATION OF {:?}", r2, r1);
+            let arg = weak_head(&arg, rules);
+            matches(&arg, Vec::new(), &parg, rules)
+        };
+        assert!(res.is_empty());
     }
 }
