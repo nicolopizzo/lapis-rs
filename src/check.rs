@@ -146,7 +146,6 @@ fn type_infer(node: &Rc<LNode>, rules: &RewriteMap) -> Result<Option<Rc<LNode>>>
                 // substitute occurrences of `bvar` in `body` with `right`
                 bvar.subs_to(right);
 
-                //CSC XXXXYYYY was the cause of slowness: ????   let body = weak_head(body, rules);
                 Ok(Some(body.clone()))
             } else {
                 println!("ERROR 1: {:?}", left_ty_whd);
